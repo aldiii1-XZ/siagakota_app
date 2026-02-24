@@ -5,14 +5,96 @@ import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:uuid/uuid.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(
-    ChangeNotifierProvider(
-      create: (_) => ReportController(),
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => AuthController()),
+        ChangeNotifierProvider(create: (_) => ReportController()),
+      ],
       child: const SiagaKotaApp(),
     ),
   );
+}
+
+class AuthController extends ChangeNotifier {
+  String? _userName;
+  List<String> _accounts = [];
+  bool _ready = false;
+
+  String? get userName => _userName;
+  List<String> get accounts => List.unmodifiable(_accounts);
+  bool get isReady => _ready;
+  bool get isLoggedIn => _userName != null;
+
+  AuthController() {
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _accounts = prefs.getStringList('accounts') ?? [];
+      _userName = prefs.getString('lastUser');
+    } catch (e) {
+      // Jika gagal baca prefs, tetap lanjut dengan data kosong agar UI tidak hang.
+      _accounts = [];
+      _userName = null;
+    } finally {
+      _ready = true;
+      notifyListeners();
+    }
+  }
+
+  Future<void> _persistAccounts() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList('accounts', _accounts);
+    } catch (_) {
+      // Abaikan kegagalan penyimpanan, biarkan berjalan tanpa persistensi.
+    }
+  }
+
+  Future<void> _persistLastUser() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (_userName == null) {
+        await prefs.remove('lastUser');
+      } else {
+        await prefs.setString('lastUser', _userName!);
+      }
+    } catch (_) {
+      // Abaikan kegagalan penyimpanan, biarkan berjalan tanpa persistensi.
+    }
+  }
+
+  Future<void> createAccount(String name) async {
+    final clean = name.trim();
+    if (clean.isEmpty) return;
+    _userName = clean;
+    if (!_accounts.contains(clean)) {
+      _accounts.add(clean);
+    }
+    await _persistAccounts();
+    await _persistLastUser();
+    notifyListeners();
+  }
+
+  Future<void> loginWithExisting(String name) async {
+    if (!_accounts.contains(name)) return;
+    _userName = name;
+    await _persistLastUser();
+    notifyListeners();
+  }
+
+  void logout() {
+    _userName = null;
+    _persistLastUser();
+    notifyListeners();
+  }
 }
 
 class SiagaKotaApp extends StatelessWidget {
@@ -27,7 +109,28 @@ class SiagaKotaApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
         useMaterial3: true,
       ),
-      home: const HomeShell(),
+      home: const AuthGate(),
+    );
+  }
+}
+
+class AuthGate extends StatelessWidget {
+  const AuthGate({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<AuthController>(
+      builder: (context, auth, _) {
+        if (!auth.isReady) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+        if (auth.isLoggedIn) {
+          return const HomeShell();
+        }
+        return const LoginPage();
+      },
     );
   }
 }
@@ -95,8 +198,20 @@ class Report {
 class ReportController extends ChangeNotifier {
   final List<Report> _reports = [];
   final _uuid = const Uuid();
+  final List<Report> _sortedCache = [];
+  bool _sortedDirty = true;
 
   List<Report> get reports => List.unmodifiable(_reports);
+  List<Report> get sortedReports {
+    if (_sortedDirty) {
+      _sortedCache
+        ..clear()
+        ..addAll(_reports)
+        ..sort((a, b) => b.priorityScore.compareTo(a.priorityScore));
+      _sortedDirty = false;
+    }
+    return List.unmodifiable(_sortedCache);
+  }
 
   Future<void> addReport({
     required String nama,
@@ -125,6 +240,7 @@ class ReportController extends ChangeNotifier {
     }
 
     _reports.insert(0, newReport);
+    _sortedDirty = true;
     notifyListeners();
   }
 
@@ -132,6 +248,7 @@ class ReportController extends ChangeNotifier {
     final idx = _reports.indexWhere((r) => r.id == id);
     if (idx == -1) return;
     _reports[idx].votes += 1;
+    _sortedDirty = true;
     notifyListeners();
   }
 
@@ -139,6 +256,7 @@ class ReportController extends ChangeNotifier {
     final idx = _reports.indexWhere((r) => r.id == id);
     if (idx == -1) return;
     _reports[idx].status = status;
+    _sortedDirty = true;
     notifyListeners();
   }
 
@@ -188,9 +306,23 @@ class _HomeShellState extends State<HomeShell>
 
   @override
   Widget build(BuildContext context) {
+    final auth = context.watch<AuthController>();
     return Scaffold(
       appBar: AppBar(
-        title: const Text('SiagaKota'),
+        title: Text('SiagaKota • ${auth.userName ?? 'Pengguna'}'),
+        actions: [
+          IconButton(
+            tooltip: 'Keluar',
+            onPressed: () {
+              auth.logout();
+              Navigator.of(context).pushAndRemoveUntil(
+                MaterialPageRoute(builder: (_) => const AuthGate()),
+                (route) => false,
+              );
+            },
+            icon: const Icon(Icons.logout),
+          ),
+        ],
         bottom: TabBar(
           controller: _tabController,
           tabs: const [
@@ -219,6 +351,132 @@ class _HomeShellState extends State<HomeShell>
   }
 }
 
+class LoginPage extends StatefulWidget {
+  const LoginPage({super.key});
+
+  @override
+  State<LoginPage> createState() => _LoginPageState();
+}
+
+class _LoginPageState extends State<LoginPage> {
+  final controller = TextEditingController();
+
+  @override
+  void dispose() {
+    controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<AuthController>(
+      builder: (context, auth, _) {
+        final hasAccounts = auth.accounts.isNotEmpty;
+        return Scaffold(
+          body: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 380),
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Icon(Icons.lock_person, size: 64, color: Colors.blue),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Masuk ke SiagaKota',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.headlineSmall,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      hasAccounts
+                          ? 'Pilih akun yang sudah dibuat atau tambahkan akun baru.'
+                          : 'Buat akun terlebih dahulu agar laporan bisa tersimpan.',
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 24),
+                    if (hasAccounts) ...[
+                      Text(
+                        'Pilih akun',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: auth.accounts
+                            .map(
+                              (name) => ElevatedButton.icon(
+                                icon: const Icon(Icons.person),
+                                label: Text(name),
+                                onPressed: () async {
+                                  await auth.loginWithExisting(name);
+                                  if (!mounted) return;
+                                  Navigator.of(context).pushAndRemoveUntil(
+                                    MaterialPageRoute(
+                                      builder: (_) => const AuthGate(),
+                                    ),
+                                    (route) => false,
+                                  );
+                                },
+                              ),
+                            )
+                            .toList(),
+                      ),
+                      const SizedBox(height: 20),
+                      const Divider(),
+                      const SizedBox(height: 16),
+                    ],
+                    Text(
+                      'Buat akun baru',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: controller,
+                      textInputAction: TextInputAction.done,
+                      decoration: const InputDecoration(
+                        labelText: 'Nama akun',
+                        border: OutlineInputBorder(),
+                      ),
+                      onSubmitted: (_) => _createAccount(auth),
+                    ),
+                    const SizedBox(height: 10),
+                    FilledButton.icon(
+                      icon: const Icon(Icons.add),
+                      label: const Text('Simpan & Masuk'),
+                      onPressed: () => _createAccount(auth),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _createAccount(AuthController auth) async {
+    final name = controller.text.trim();
+    if (name.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Nama akun tidak boleh kosong')),
+      );
+      return;
+    }
+    await auth.createAccount(name);
+    if (!mounted) return;
+    controller.clear();
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const AuthGate()),
+      (route) => false,
+    );
+  }
+}
+
 class ReportListView extends StatelessWidget {
   const ReportListView({super.key});
 
@@ -226,8 +484,7 @@ class ReportListView extends StatelessWidget {
   Widget build(BuildContext context) {
     return Consumer<ReportController>(
       builder: (context, controller, _) {
-        final items = [...controller.reports]
-          ..sort((a, b) => b.priorityScore.compareTo(a.priorityScore));
+        final items = controller.sortedReports;
 
         if (items.isEmpty) {
           return const Center(child: Text('Belum ada laporan'));
@@ -306,6 +563,9 @@ class ReportCard extends StatelessWidget {
                   File(report.fotoPath!),
                   height: 140,
                   width: double.infinity,
+                  cacheHeight: 720,
+                  cacheWidth: 1280,
+                  filterQuality: FilterQuality.medium,
                   fit: BoxFit.cover,
                   errorBuilder: (context, error, stack) => Container(
                     height: 140,
