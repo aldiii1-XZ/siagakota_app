@@ -1,5 +1,4 @@
 import 'dart:io' show File, Platform;
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
@@ -9,6 +8,11 @@ import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:uuid/uuid.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:pdf/pdf.dart' as pdf;
+import 'package:share_plus/share_plus.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -139,6 +143,8 @@ class AuthGate extends StatelessWidget {
 }
 
 enum ReportStatus { diterima, proses, selesai }
+
+enum ExportFormat { csv, pdf, doc, print }
 
 extension ReportStatusText on ReportStatus {
   String get label {
@@ -490,7 +496,7 @@ class _LoginPageState extends State<LoginPage> {
                                 label: Text(name),
                                 onPressed: () async {
                                   await auth.loginWithExisting(name);
-                                  if (!mounted) return;
+                                  if (!context.mounted) return;
                                   Navigator.of(context).pushAndRemoveUntil(
                                     MaterialPageRoute(
                                       builder: (_) => const AuthGate(),
@@ -732,78 +738,6 @@ class _InfoChip extends StatelessWidget {
   }
 }
 
-class _LocationBanner extends StatelessWidget {
-  const _LocationBanner({
-    required this.position,
-    required this.loading,
-    required this.error,
-    required this.onRefresh,
-  });
-
-  final Position? position;
-  final bool loading;
-  final String? error;
-  final Future<void> Function() onRefresh;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Row(
-          children: [
-            CircleAvatar(
-              backgroundColor: Colors.blue.shade50,
-              child: const Icon(Icons.my_location, color: Colors.blue),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Lokasi Anda saat ini',
-                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
-                  ),
-                  const SizedBox(height: 4),
-                  if (loading)
-                    const Text(
-                      'Mengambil lokasi...',
-                      style: TextStyle(color: Colors.grey),
-                    )
-                  else if (error != null)
-                    Text(error!, style: TextStyle(color: Colors.red.shade700))
-                  else if (position != null)
-                    Text(
-                      '${position!.latitude.toStringAsFixed(4)}, ${position!.longitude.toStringAsFixed(4)}',
-                      style: const TextStyle(color: Colors.black87),
-                    )
-                  else
-                    const Text(
-                      'Lokasi belum tersedia',
-                      style: TextStyle(color: Colors.grey),
-                    ),
-                  const SizedBox(height: 4),
-                  const Text(
-                    'Dipakai untuk mencari penanganan terdekat.',
-                    style: TextStyle(fontSize: 12, color: Colors.grey),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 8),
-            IconButton(
-              tooltip: 'Segarkan lokasi',
-              onPressed: loading ? null : onRefresh,
-              icon: const Icon(Icons.refresh),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class _LocationBadge extends StatelessWidget {
   const _LocationBadge({
     required this.position,
@@ -900,19 +834,202 @@ class DashboardView extends StatelessWidget {
             ),
             const SizedBox(height: 20),
             ElevatedButton.icon(
-              onPressed: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Export CSV (mock) berhasil disiapkan'),
-                  ),
-                );
-              },
+              onPressed: () => _showExportSheet(context),
               icon: const Icon(Icons.download),
-              label: const Text('Export data'),
+              label: const Text('Export / Print'),
             ),
           ],
         );
       },
+    );
+  }
+
+  void _showExportSheet(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.table_view),
+                title: const Text('Export ke CSV / Excel'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _exportData(context, ExportFormat.csv);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.picture_as_pdf),
+                title: const Text('Export ke PDF'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _exportData(context, ExportFormat.pdf);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.description),
+                title: const Text('Export ke Word (.doc)'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _exportData(context, ExportFormat.doc);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.print),
+                title: const Text('Print langsung'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _exportData(context, ExportFormat.print);
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _exportData(BuildContext context, ExportFormat format) async {
+    final controller = context.read<ReportController>();
+    final data = controller.reports;
+    if (data.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Belum ada data untuk diexport')),
+      );
+      return;
+    }
+
+    try {
+      switch (format) {
+        case ExportFormat.csv:
+          await _exportCsv(data);
+          if (!context.mounted) return;
+          _toast(context, 'CSV siap dibagikan');
+          break;
+        case ExportFormat.pdf:
+          await _exportPdf(data, share: true);
+          if (!context.mounted) return;
+          _toast(context, 'PDF siap dibagikan');
+          break;
+        case ExportFormat.doc:
+          await _exportDoc(data);
+          if (!context.mounted) return;
+          _toast(context, 'Dokumen .doc siap dibagikan');
+          break;
+        case ExportFormat.print:
+          await _exportPdf(data, share: false, printDirect: true);
+          break;
+      }
+    } catch (e) {
+      if (!context.mounted) return;
+      _toast(context, 'Gagal export: $e');
+    }
+  }
+
+  Future<void> _exportCsv(List<Report> data) async {
+    final buffer = StringBuffer();
+    buffer.writeln(
+      'Jenis,Nama,Deskripsi,Severity,Status,Latitude,Longitude,Tanggal',
+    );
+    for (final r in data) {
+      buffer.writeln(
+        '${_csv(r.jenis)},${_csv(r.nama)},${_csv(r.deskripsi)},${r.severity},${r.status.label},${r.latitude},${r.longitude},${r.createdAt.toIso8601String()}',
+      );
+    }
+    final dir = await getTemporaryDirectory();
+    final file = File('${dir.path}/siagakota_export.csv');
+    await file.writeAsString(buffer.toString());
+    await Share.shareXFiles([XFile(file.path)], text: 'Export data SiagaKota');
+  }
+
+  Future<void> _exportDoc(List<Report> data) async {
+    final buffer = StringBuffer();
+    buffer.writeln('Data Laporan SiagaKota');
+    buffer.writeln('=======================');
+    for (final r in data) {
+      buffer.writeln(
+        '- ${r.jenis} | ${r.nama} | ${r.deskripsi} | Severity ${r.severity} | ${r.status.label} | ${r.latitude.toStringAsFixed(4)}, ${r.longitude.toStringAsFixed(4)} | ${DateFormat('dd MMM yyyy HH:mm').format(r.createdAt)}',
+      );
+    }
+    final dir = await getTemporaryDirectory();
+    final file = File('${dir.path}/siagakota_export.doc');
+    await file.writeAsString(buffer.toString());
+    await Share.shareXFiles([XFile(file.path)], text: 'Export DOC SiagaKota');
+  }
+
+  Future<void> _exportPdf(
+    List<Report> data, {
+    bool share = true,
+    bool printDirect = false,
+  }) async {
+    final doc = pw.Document();
+    doc.addPage(
+      pw.MultiPage(
+        build: (_) => [
+          pw.Text(
+            'Data Laporan SiagaKota',
+            style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold),
+          ),
+          pw.SizedBox(height: 10),
+          pw.TableHelper.fromTextArray(
+            headers: [
+              'Jenis',
+              'Nama',
+              'Deskripsi',
+              'Severity',
+              'Status',
+              'Koordinat',
+              'Tanggal',
+            ],
+            data: data
+                .map(
+                  (r) => [
+                    r.jenis,
+                    r.nama,
+                    r.deskripsi,
+                    r.severity.toStringAsFixed(1),
+                    r.status.label,
+                    '${r.latitude.toStringAsFixed(4)}, ${r.longitude.toStringAsFixed(4)}',
+                    DateFormat('dd MMM yyyy HH:mm').format(r.createdAt),
+                  ],
+                )
+                .toList(),
+            cellStyle: const pw.TextStyle(fontSize: 9),
+            headerStyle: pw.TextStyle(
+              fontSize: 10,
+              fontWeight: pw.FontWeight.bold,
+            ),
+            headerDecoration: pw.BoxDecoration(color: pdf.PdfColors.grey300),
+            columnWidths: {2: const pw.FixedColumnWidth(160)},
+          ),
+        ],
+      ),
+    );
+
+    final bytes = await doc.save();
+
+    if (printDirect) {
+      await Printing.layoutPdf(onLayout: (_) async => bytes);
+      return;
+    }
+
+    final dir = await getTemporaryDirectory();
+    final file = File('${dir.path}/siagakota_export.pdf');
+    await file.writeAsBytes(bytes);
+    await Share.shareXFiles([XFile(file.path)], text: 'Export PDF SiagaKota');
+  }
+
+  String _csv(String value) {
+    final v = value.replaceAll('"', '""');
+    return '"$v"';
+  }
+
+  void _toast(BuildContext context, String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(msg), duration: const Duration(seconds: 2)),
     );
   }
 }
@@ -1060,8 +1177,44 @@ class _ReportFormPageState extends State<ReportFormPage> {
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
+                if (fotoBytes != null)
+                  const Expanded(
+                    child: Text(
+                      'Foto terpilih',
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
               ],
             ),
+            if (fotoPath != null || fotoBytes != null) ...[
+              const SizedBox(height: 10),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: SizedBox(
+                  height: 180,
+                  width: double.infinity,
+                  child: fotoBytes != null
+                      ? Image.memory(
+                          fotoBytes!,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stack) => Container(
+                            color: Colors.grey.shade200,
+                            alignment: Alignment.center,
+                            child: const Text('Foto tidak dapat dimuat'),
+                          ),
+                        )
+                      : Image.file(
+                          File(fotoPath!),
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stack) => Container(
+                            color: Colors.grey.shade200,
+                            alignment: Alignment.center,
+                            child: const Text('Foto tidak dapat dimuat'),
+                          ),
+                        ),
+                ),
+              ),
+            ],
             const SizedBox(height: 20),
             ElevatedButton(
               onPressed: _submit,
