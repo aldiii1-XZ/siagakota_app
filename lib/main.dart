@@ -486,56 +486,10 @@ class _SplashScreenState extends State<SplashScreen> {
   }
 
   Future<void> _checkUpdate() async {
-    final result = await _updateService.checkForUpdate();
-    if (!mounted) return;
-    if (result.isUpdateAvailable) {
-      await _showUpdateDialog(result);
-    }
+    await _updateService.checkForUpdate(context);
     if (!mounted) return;
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(builder: (_) => const AuthGate()),
-    );
-  }
-
-  Future<void> _showUpdateDialog(UpdateCheckResult info) async {
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: !info.forceUpdate,
-      builder: (ctx) {
-        return AlertDialog(
-          title: Text(info.forceUpdate ? 'Wajib update' : 'Update tersedia'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Versi terbaru: ${info.latestVersion}'),
-              const SizedBox(height: 8),
-              const Text('Silakan unduh APK terbaru untuk melanjutkan.'),
-            ],
-          ),
-          actions: [
-            if (!info.forceUpdate)
-              TextButton(
-                onPressed: () => Navigator.of(ctx).pop(),
-                child: const Text('Nanti'),
-              ),
-            ElevatedButton(
-              onPressed: () async {
-                final navigator = Navigator.of(ctx);
-                final uri = Uri.parse(info.apkUrl);
-                final can = await canLaunchUrl(uri);
-                if (can) {
-                  await launchUrl(uri, mode: LaunchMode.externalApplication);
-                }
-                if (!info.forceUpdate && navigator.canPop()) {
-                  navigator.pop();
-                }
-              },
-              child: const Text('Update'),
-            ),
-          ],
-        );
-      },
     );
   }
 

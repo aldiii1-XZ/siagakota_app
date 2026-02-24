@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
-import 'package:siagakota_app/main.dart';
+import 'package:siagakota/main.dart';
 
 void main() {
   testWidgets('Menampilkan daftar laporan kosong', (WidgetTester tester) async {
