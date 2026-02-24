@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "901234658011",
+    "project_id": "siaga-kota",
+    "storage_bucket": "siaga-kota.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:901234658011:android:36fb960615463bba41dafe",
+        "android_client_info": {
+          "package_name": "com.example.siagakota_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDlq0yCM2psXc-O_3EeyJCvY1vCRkiwoR4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
