@@ -39,11 +39,15 @@ class AuthController extends ChangeNotifier {
   String? _userName;
   List<String> _accounts = [];
   bool _ready = false;
+  bool _isAdmin = false;
+  String? _adminKecamatan;
 
   String? get userName => _userName;
   List<String> get accounts => List.unmodifiable(_accounts);
   bool get isReady => _ready;
   bool get isLoggedIn => _userName != null;
+  bool get isAdmin => _isAdmin;
+  String? get adminKecamatan => _adminKecamatan;
 
   AuthController() {
     _load();
@@ -105,8 +109,23 @@ class AuthController extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<bool> loginAsAdmin({
+    required String password,
+    required String kecamatan,
+  }) async {
+    const adminPassword = 'admin123';
+    if (password.trim() != adminPassword) return false;
+    _adminKecamatan = kecamatan;
+    _isAdmin = true;
+    _userName = 'Admin';
+    notifyListeners();
+    return true;
+  }
+
   void logout() {
     _userName = null;
+    _isAdmin = false;
+    _adminKecamatan = null;
     _persistLastUser();
     notifyListeners();
   }
@@ -230,6 +249,27 @@ enum ReportStatus { diterima, proses, selesai }
 
 enum ExportFormat { csv, pdf, doc, print }
 
+const List<String> kecamatanPalembang = [
+  'Alang-Alang Lebar',
+  'Bukit Kecil',
+  'Gandus',
+  'Ilir Barat I',
+  'Ilir Barat II',
+  'Ilir Timur I',
+  'Ilir Timur II',
+  'Ilir Timur III',
+  'Jakabaring',
+  'Kalidoni',
+  'Kemuning',
+  'Kertapati',
+  'Plaju',
+  'Sako',
+  'Seberang Ulu I',
+  'Seberang Ulu II',
+  'Sematang Borang',
+  'Sukarami',
+];
+
 extension ReportStatusText on ReportStatus {
   String get label {
     switch (this) {
@@ -261,6 +301,20 @@ Color severityColor(double severity) {
   return Colors.green.shade600;
 }
 
+class Hotspot {
+  final double latitude;
+  final double longitude;
+  final int count;
+  final double averageSeverity;
+
+  const Hotspot({
+    required this.latitude,
+    required this.longitude,
+    required this.count,
+    required this.averageSeverity,
+  });
+}
+
 class Report {
   final String id;
   final String nama;
@@ -269,10 +323,12 @@ class Report {
   final double latitude;
   final double longitude;
   final double severity; // 1..5
+  final String kecamatan;
   final String? fotoPath;
   final Uint8List? fotoBytes;
   final double? accuracyMeters;
   final DateTime createdAt;
+  final String owner; // nama akun yang membuat
   ReportStatus status;
   int votes;
   String? duplicateOf;
@@ -286,10 +342,12 @@ class Report {
     required this.latitude,
     required this.longitude,
     required this.severity,
+    required this.kecamatan,
     required this.fotoPath,
     required this.fotoBytes,
     required this.accuracyMeters,
     required this.createdAt,
+    required this.owner,
     this.status = ReportStatus.diterima,
     this.votes = 0,
     this.duplicateOf,
@@ -297,6 +355,50 @@ class Report {
   });
 
   double get priorityScore => severity * 2 + votes + weatherRisk;
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'nama': nama,
+        'jenis': jenis,
+        'deskripsi': deskripsi,
+        'latitude': latitude,
+        'longitude': longitude,
+        'severity': severity,
+        'kecamatan': kecamatan,
+        'fotoPath': fotoPath,
+        'fotoBytes': fotoBytes != null ? base64Encode(fotoBytes!) : null,
+        'accuracyMeters': accuracyMeters,
+        'createdAt': createdAt.toIso8601String(),
+        'status': status.name,
+        'votes': votes,
+        'duplicateOf': duplicateOf,
+        'weatherRisk': weatherRisk,
+        'owner': owner,
+      };
+
+  factory Report.fromJson(Map<String, dynamic> json) => Report(
+        id: json['id'] as String,
+        nama: json['nama'] as String? ?? '-',
+        jenis: json['jenis'] as String? ?? 'Banjir',
+        deskripsi: json['deskripsi'] as String? ?? '',
+        latitude: (json['latitude'] as num).toDouble(),
+        longitude: (json['longitude'] as num).toDouble(),
+        severity: (json['severity'] as num).toDouble(),
+        kecamatan: json['kecamatan'] as String? ?? kecamatanPalembang.first,
+        fotoPath: json['fotoPath'] as String?,
+        fotoBytes: json['fotoBytes'] != null
+            ? base64Decode(json['fotoBytes'] as String)
+            : null,
+        accuracyMeters: (json['accuracyMeters'] as num?)?.toDouble(),
+        createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
+            DateTime.now(),
+        status: ReportStatus.values
+            .firstWhere((e) => e.name == json['status'], orElse: () => ReportStatus.diterima),
+        votes: json['votes'] as int? ?? 0,
+        duplicateOf: json['duplicateOf'] as String?,
+        weatherRisk: (json['weatherRisk'] as num?)?.toDouble() ?? 0,
+        owner: json['owner'] as String? ?? '-',
+      );
 }
 
 class ReportDraft {
@@ -304,6 +406,7 @@ class ReportDraft {
   final String jenis;
   final String deskripsi;
   final double severity;
+  final String kecamatan;
   final String? fotoPath;
   final String? fotoBase64;
 
@@ -312,6 +415,7 @@ class ReportDraft {
     required this.jenis,
     required this.deskripsi,
     required this.severity,
+    required this.kecamatan,
     this.fotoPath,
     this.fotoBase64,
   });
@@ -321,6 +425,7 @@ class ReportDraft {
     'jenis': jenis,
     'deskripsi': deskripsi,
     'severity': severity,
+    'kecamatan': kecamatan,
     'fotoPath': fotoPath,
     'fotoBase64': fotoBase64,
   };
@@ -330,6 +435,7 @@ class ReportDraft {
     jenis: json['jenis'] as String? ?? 'Banjir',
     deskripsi: json['deskripsi'] as String? ?? '',
     severity: (json['severity'] as num?)?.toDouble() ?? 3,
+    kecamatan: json['kecamatan'] as String? ?? kecamatanPalembang.first,
     fotoPath: json['fotoPath'] as String?,
     fotoBase64: json['fotoBase64'] as String?,
   );
@@ -365,6 +471,8 @@ class ReportController extends ChangeNotifier {
     required String jenis,
     required String deskripsi,
     required double severity,
+    required String kecamatan,
+    required String owner,
     required Position position,
     String? fotoPath,
     Uint8List? fotoBytes,
@@ -377,10 +485,12 @@ class ReportController extends ChangeNotifier {
       latitude: position.latitude,
       longitude: position.longitude,
       severity: severity,
+      kecamatan: kecamatan,
       fotoPath: fotoPath,
       fotoBytes: fotoBytes,
       accuracyMeters: position.accuracy.isFinite ? position.accuracy : null,
       createdAt: DateTime.now(),
+      owner: owner,
       weatherRisk: _mockWeatherRisk(position.latitude, position.longitude),
     );
     final duplicate = _findDuplicate(newReport);
@@ -476,6 +586,52 @@ class ReportController extends ChangeNotifier {
   double _mockWeatherRisk(double lat, double lng) {
     return 0.5;
   }
+
+  List<Hotspot> computeHotspots({
+    int minCount = 3,
+    List<Report>? source,
+  }) {
+    final data = source ?? _reports;
+    if (data.isEmpty) return const [];
+    final buckets = <String, _HotBucket>{};
+    for (final r in data) {
+      final key = _bucketKey(r.latitude, r.longitude);
+      final bucket = buckets.putIfAbsent(key, () => _HotBucket());
+      bucket.count += 1;
+      bucket.latSum += r.latitude;
+      bucket.lngSum += r.longitude;
+      bucket.severitySum += r.severity;
+    }
+    final result = <Hotspot>[];
+    for (final entry in buckets.entries) {
+      final b = entry.value;
+      if (b.count < minCount) continue;
+      result.add(
+        Hotspot(
+          latitude: b.latSum / b.count,
+          longitude: b.lngSum / b.count,
+          count: b.count,
+          averageSeverity: b.severitySum / b.count,
+        ),
+      );
+    }
+    result.sort((a, b) => b.count.compareTo(a.count));
+    return result;
+  }
+
+  String _bucketKey(double lat, double lng) {
+    // Grid kasar ~1 km (0.01 derajat) untuk penanda rawan.
+    final latKey = (lat * 100).round();
+    final lngKey = (lng * 100).round();
+    return '$latKey:$lngKey';
+  }
+}
+
+class _HotBucket {
+  int count = 0;
+  double latSum = 0;
+  double lngSum = 0;
+  double severitySum = 0;
 }
 
 class HomeShell extends StatefulWidget {
@@ -521,6 +677,18 @@ class _HomeShellState extends State<HomeShell>
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthController>();
+    final reportsProvider = context.watch<ReportController>();
+    final visibleReports = auth.isAdmin
+        ? reportsProvider.reports
+            .where((r) => r.kecamatan == auth.adminKecamatan)
+            .toList()
+        : reportsProvider.reports.where((r) => r.owner == auth.userName).toList();
+    final hotspots = auth.isAdmin
+        ? reportsProvider.computeHotspots(minCount: 3)
+        : reportsProvider.computeHotspots(
+            source: visibleReports,
+            minCount: 3,
+          );
     return Scaffold(
       appBar: AppBar(
         title: Text('SiagaKota • ${auth.userName ?? 'Pengguna'}'),
@@ -534,6 +702,19 @@ class _HomeShellState extends State<HomeShell>
             onShowError: _showLocError,
           ),
           const SizedBox(width: 6),
+          if (auth.isAdmin)
+            TextButton.icon(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const AdminPanelPage()),
+                );
+              },
+              icon: const Icon(Icons.admin_panel_settings),
+              label: Text(auth.adminKecamatan ?? 'Panel'),
+              style: TextButton.styleFrom(foregroundColor: Colors.blueGrey.shade800),
+            ),
+          if (auth.isAdmin) const SizedBox(width: 6),
           IconButton(
             tooltip: 'Keluar',
             onPressed: () {
@@ -560,25 +741,26 @@ class _HomeShellState extends State<HomeShell>
         children: [
           const ReportListView(),
           const DashboardView(),
-          Consumer<ReportController>(
-            builder: (context, rc, child) => MapView(
-              reportsProvider: rc,
-              currentPosition: _currentPosition,
-              onRefreshLocation: _ambilLokasiAwal,
-            ),
+          MapView(
+            reports: visibleReports,
+            hotspots: hotspots,
+            currentPosition: _currentPosition,
+            onRefreshLocation: _ambilLokasiAwal,
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () async {
-          await Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const ReportFormPage()),
-          );
-        },
-        icon: const Icon(Icons.add),
-        label: const Text('Buat Laporan'),
-      ),
+      floatingActionButton: auth.isAdmin
+          ? null
+          : FloatingActionButton.extended(
+              onPressed: () async {
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const ReportFormPage()),
+                );
+              },
+              icon: const Icon(Icons.add),
+              label: const Text('Buat Laporan'),
+            ),
     );
   }
 
@@ -740,10 +922,13 @@ class LoginPage extends StatefulWidget {
 
 class _LoginPageState extends State<LoginPage> {
   final controller = TextEditingController();
+  final adminPassController = TextEditingController();
+  String _adminKecamatan = kecamatanPalembang.first;
 
   @override
   void dispose() {
     controller.dispose();
+    adminPassController.dispose();
     super.dispose();
   }
 
@@ -777,6 +962,12 @@ class _LoginPageState extends State<LoginPage> {
                       textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: 24),
+                    OutlinedButton.icon(
+                      icon: const Icon(Icons.admin_panel_settings),
+                      label: const Text('Masuk sebagai Admin'),
+                      onPressed: _openAdminLogin,
+                    ),
+                    const SizedBox(height: 16),
                     if (hasAccounts) ...[
                       Text(
                         'Pilih akun',
@@ -855,6 +1046,81 @@ class _LoginPageState extends State<LoginPage> {
       (route) => false,
     );
   }
+
+  Future<void> _openAdminLogin() async {
+    final auth = context.read<AuthController>();
+    adminPassController.clear();
+    final success = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+            title: const Text('Masuk mode Admin'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: adminPassController,
+                  obscureText: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Password admin',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  value: _adminKecamatan,
+                  decoration: const InputDecoration(
+                    labelText: 'Kecamatan yang dikelola',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: kecamatanPalembang
+                      .map(
+                        (k) => DropdownMenuItem(
+                          value: k,
+                          child: Text(k),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (val) => _adminKecamatan = val ?? kecamatanPalembang.first,
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Batal'),
+              ),
+              ElevatedButton(
+                onPressed: () async {
+                  final ok = await auth.loginAsAdmin(
+                    password: adminPassController.text,
+                    kecamatan: _adminKecamatan,
+                  );
+                  if (!mounted) return;
+                  if (!ok) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Password admin salah')),
+                    );
+                    return;
+                  }
+                  Navigator.pop(ctx, true);
+                },
+                child: const Text('Masuk'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+
+    if (success && mounted) {
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const AuthGate()),
+        (route) => false,
+      );
+    }
+  }
 }
 
 class ReportListView extends StatelessWidget {
@@ -864,7 +1130,14 @@ class ReportListView extends StatelessWidget {
   Widget build(BuildContext context) {
     return Consumer<ReportController>(
       builder: (context, controller, _) {
-        final items = controller.sortedReports;
+        final auth = context.watch<AuthController>();
+        final items = auth.isAdmin
+            ? controller.sortedReports
+                .where((r) => r.kecamatan == auth.adminKecamatan)
+                .toList()
+            : controller.sortedReports
+                .where((r) => r.owner == auth.userName)
+                .toList();
         final drafts = controller.drafts;
 
         if (items.isEmpty) {
@@ -1054,6 +1327,7 @@ class ReportCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final controller = context.read<ReportController>();
+    final auth = context.watch<AuthController>();
     final formatter = DateFormat('dd MMM HH:mm');
 
     return Card(
@@ -1114,6 +1388,7 @@ class ReportCard extends StatelessWidget {
               spacing: 8,
               runSpacing: 6,
               children: [
+                _InfoChip(icon: Icons.map, label: report.kecamatan),
                 _InfoChip(icon: Icons.place, label: _coordLabel(report)),
                 if (report.duplicateOf != null)
                   _InfoChip(icon: Icons.link, label: 'Duplikasi'),
@@ -1167,14 +1442,28 @@ class ReportCard extends StatelessWidget {
                 ),
                 Text('${report.votes}'),
                 const Spacer(),
-                PopupMenuButton<ReportStatus>(
-                  tooltip: 'Ubah status',
-                  onSelected: (val) => controller.updateStatus(report.id, val),
-                  itemBuilder: (_) => ReportStatus.values
-                      .map((s) => PopupMenuItem(value: s, child: Text(s.label)))
-                      .toList(),
-                  child: const Icon(Icons.more_vert),
-                ),
+                if (auth.isAdmin)
+                  PopupMenuButton<ReportStatus>(
+                    tooltip: 'Ubah status',
+                    onSelected: (val) => controller.updateStatus(report.id, val),
+                    itemBuilder: (_) => ReportStatus.values
+                        .map(
+                          (s) => PopupMenuItem(
+                            value: s,
+                            child: Text(s.label),
+                          ),
+                        )
+                        .toList(),
+                    child: const Icon(Icons.more_vert),
+                  )
+                else
+                  Tooltip(
+                    message: 'Hanya admin yang dapat mengubah status',
+                    child: Icon(
+                      Icons.lock_outline,
+                      color: Colors.grey.shade500,
+                    ),
+                  ),
               ],
             ),
           ],
@@ -1293,20 +1582,30 @@ class DashboardView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Consumer<ReportController>(
-      builder: (_, controller, child) {
-        final total = controller.reports.length;
-        final selesai = controller.reports
-            .where((r) => r.status == ReportStatus.selesai)
-            .length;
-        final proses = controller.reports
-            .where((r) => r.status == ReportStatus.proses)
-            .length;
+      builder: (ctx, controller, child) {
+        final auth = ctx.watch<AuthController>();
+        final visible = auth.isAdmin
+            ? controller.reports
+                .where((r) => r.kecamatan == auth.adminKecamatan)
+                .toList()
+            : controller.reports.where((r) => r.owner == auth.userName).toList();
+        final total = visible.length;
+        final selesai =
+            visible.where((r) => r.status == ReportStatus.selesai).length;
+        final proses =
+            visible.where((r) => r.status == ReportStatus.proses).length;
         final diterima = total - selesai - proses;
 
         Map<String, int> perJenis = {};
-        for (final r in controller.reports) {
+        for (final r in visible) {
           perJenis[r.jenis] = (perJenis[r.jenis] ?? 0) + 1;
         }
+        final hotspots = auth.isAdmin
+            ? controller.computeHotspots(minCount: 3)
+            : controller.computeHotspots(
+                source: visible,
+                minCount: 3,
+              );
 
         return ListView(
           padding: const EdgeInsets.all(16),
@@ -1334,6 +1633,25 @@ class DashboardView extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 20),
+            if (hotspots.isNotEmpty) ...[
+              Text(
+                'Wilayah rawan (≥3 laporan dalam radius ~1km)',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 8),
+              ...hotspots.take(5).map(
+                (h) => ListTile(
+                  leading: const Icon(Icons.warning_amber, color: Colors.red),
+                  title: Text(
+                    '${h.latitude.toStringAsFixed(4)}, ${h.longitude.toStringAsFixed(4)}',
+                  ),
+                  subtitle: Text(
+                    '${h.count} laporan • keparahan rata-rata ${h.averageSeverity.toStringAsFixed(1)}',
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+            ],
             ElevatedButton.icon(
               onPressed: () => _showExportSheet(context),
               icon: const Icon(Icons.download),
@@ -1395,7 +1713,12 @@ class DashboardView extends StatelessWidget {
 
   Future<void> _exportData(BuildContext context, ExportFormat format) async {
     final controller = context.read<ReportController>();
-    final data = controller.reports;
+    final auth = context.read<AuthController>();
+    final data = auth.isAdmin
+        ? controller.reports
+            .where((r) => r.kecamatan == auth.adminKecamatan)
+            .toList()
+        : controller.reports.where((r) => r.owner == auth.userName).toList();
     if (data.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Belum ada data untuk diexport')),
@@ -1433,11 +1756,11 @@ class DashboardView extends StatelessWidget {
   Future<void> _exportCsv(List<Report> data) async {
     final buffer = StringBuffer();
     buffer.writeln(
-      'Jenis,Nama,Deskripsi,Severity,Status,Latitude,Longitude,Tanggal',
+      'Jenis,Nama,Deskripsi,Severity,Status,Kecamatan,Latitude,Longitude,Tanggal,Akun',
     );
     for (final r in data) {
       buffer.writeln(
-        '${_csv(r.jenis)},${_csv(r.nama)},${_csv(r.deskripsi)},${r.severity},${r.status.label},${r.latitude},${r.longitude},${r.createdAt.toIso8601String()}',
+        '${_csv(r.jenis)},${_csv(r.nama)},${_csv(r.deskripsi)},${r.severity},${r.status.label},${_csv(r.kecamatan)},${r.latitude},${r.longitude},${r.createdAt.toIso8601String()},${_csv(r.owner)}',
       );
     }
     final bytes = utf8.encode(buffer.toString());
@@ -1455,7 +1778,7 @@ class DashboardView extends StatelessWidget {
     buffer.writeln('=======================');
     for (final r in data) {
       buffer.writeln(
-        '- ${r.jenis} | ${r.nama} | ${r.deskripsi} | Severity ${r.severity} | ${r.status.label} | ${r.latitude.toStringAsFixed(4)}, ${r.longitude.toStringAsFixed(4)} | ${DateFormat('dd MMM yyyy HH:mm').format(r.createdAt)}',
+        '- ${r.jenis} | ${r.nama} | ${r.deskripsi} | Severity ${r.severity} | ${r.status.label} | ${r.kecamatan} | ${r.latitude.toStringAsFixed(4)}, ${r.longitude.toStringAsFixed(4)} | ${DateFormat('dd MMM yyyy HH:mm').format(r.createdAt)} | ${r.owner}',
       );
     }
     final bytes = utf8.encode(buffer.toString());
@@ -1488,8 +1811,10 @@ class DashboardView extends StatelessWidget {
               'Deskripsi',
               'Severity',
               'Status',
+              'Kecamatan',
               'Koordinat',
               'Tanggal',
+              'Akun',
             ],
             data: data
                 .map(
@@ -1499,8 +1824,10 @@ class DashboardView extends StatelessWidget {
                     r.deskripsi,
                     r.severity.toStringAsFixed(1),
                     r.status.label,
+                    r.kecamatan,
                     '${r.latitude.toStringAsFixed(4)}, ${r.longitude.toStringAsFixed(4)}',
                     DateFormat('dd MMM yyyy HH:mm').format(r.createdAt),
+                    r.owner,
                   ],
                 )
                 .toList(),
@@ -1546,18 +1873,31 @@ class DashboardView extends StatelessWidget {
 class MapView extends StatelessWidget {
   const MapView({
     super.key,
-    required this.reportsProvider,
+    required this.reports,
+    required this.hotspots,
     required this.currentPosition,
     required this.onRefreshLocation,
   });
 
-  final ReportController reportsProvider;
+  final List<Report> reports;
+  final List<Hotspot> hotspots;
   final Position? currentPosition;
   final Future<void> Function() onRefreshLocation;
 
   @override
   Widget build(BuildContext context) {
-    final reports = reportsProvider.reports;
+    final circles = hotspots
+        .map(
+          (h) => CircleMarker(
+            point: LatLng(h.latitude, h.longitude),
+            radius: 80,
+            color: Colors.red.withOpacity(0.18),
+            borderColor: Colors.red.shade600,
+            borderStrokeWidth: 2,
+          ),
+        )
+        .toList();
+
     final markers = <Marker>[
       if (currentPosition != null)
         Marker(
@@ -1602,6 +1942,28 @@ class MapView extends StatelessWidget {
                 icon: const Icon(Icons.directions),
                 label: const Text('Arahkan ke laporan terdekat'),
               ),
+              const Spacer(),
+              if (hotspots.isNotEmpty)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.red.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.warning_amber, color: Colors.red, size: 18),
+                      const SizedBox(width: 6),
+                      Text(
+                        '${hotspots.length} titik rawan',
+                        style: TextStyle(
+                          color: Colors.red.shade700,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
             ],
           ),
         ),
@@ -1620,6 +1982,7 @@ class MapView extends StatelessWidget {
                 userAgentPackageName: 'com.example.siagakota',
                 maxZoom: 19,
               ),
+              if (circles.isNotEmpty) CircleLayer(circles: circles),
               MarkerLayer(markers: markers),
             ],
           ),
@@ -1629,7 +1992,7 @@ class MapView extends StatelessWidget {
   }
 
   void _openNearestNavigation() async {
-    if (currentPosition == null || reportsProvider.reports.isEmpty) return;
+    if (currentPosition == null || reports.isEmpty) return;
     final nearest = _nearestReport();
     final lat = nearest.latitude;
     final lng = nearest.longitude;
@@ -1649,14 +2012,282 @@ class MapView extends StatelessWidget {
     );
     Report? nearest;
     double best = double.infinity;
-    for (final r in reportsProvider.reports) {
+    for (final r in reports) {
       final dist = d(origin, LatLng(r.latitude, r.longitude));
       if (dist < best) {
         best = dist;
         nearest = r;
       }
     }
-    return nearest ?? reportsProvider.reports.first;
+    return nearest ?? reports.first;
+  }
+}
+
+class AdminPanelPage extends StatefulWidget {
+  const AdminPanelPage({super.key});
+
+  @override
+  State<AdminPanelPage> createState() => _AdminPanelPageState();
+}
+
+class _AdminPanelPageState extends State<AdminPanelPage> {
+  ReportStatus? _filter;
+
+  @override
+  Widget build(BuildContext context) {
+    final auth = context.watch<AuthController>();
+    if (!auth.isAdmin) {
+      // Jika bukan admin, kembali ke beranda.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (Navigator.canPop(context)) Navigator.pop(context);
+      });
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Panel Admin'),
+        actions: [
+          IconButton(
+            tooltip: 'Reset filter',
+            icon: const Icon(Icons.filter_alt_off),
+            onPressed: _filter == null ? null : () => setState(() => _filter = null),
+          ),
+        ],
+      ),
+      body: Consumer<ReportController>(
+        builder: (_, rc, __) {
+          final list = [...rc.reports]..sort(
+              (a, b) => b.createdAt.compareTo(a.createdAt),
+            );
+          Iterable<Report> filtered = list;
+          if (_filter != null) {
+            filtered = filtered.where((r) => r.status == _filter);
+          }
+          final auth = context.read<AuthController>();
+          filtered = filtered.where((r) => r.kecamatan == auth.adminKecamatan);
+          final filteredList = filtered.toList();
+
+          final total = rc.reports.length;
+          final selesai = rc.reports.where((r) => r.status == ReportStatus.selesai).length;
+          final proses = rc.reports.where((r) => r.status == ReportStatus.proses).length;
+          final diterima = rc.reports.where((r) => r.status == ReportStatus.diterima).length;
+
+          return ListView(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+            children: [
+              Row(
+                children: [
+                  _AdminStat(label: 'Total', value: '$total'),
+                  const SizedBox(width: 10),
+                  _AdminStat(label: 'Diterima', value: '$diterima'),
+                  const SizedBox(width: 10),
+                  _AdminStat(label: 'Proses', value: '$proses'),
+                  const SizedBox(width: 10),
+                  _AdminStat(label: 'Selesai', value: '$selesai'),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  const Text('Filter status:', style: TextStyle(fontWeight: FontWeight.w600)),
+                  const SizedBox(width: 10),
+                  DropdownButton<ReportStatus?>(
+                    value: _filter,
+                    hint: const Text('Semua'),
+                    onChanged: (val) => setState(() => _filter = val),
+                    items: [
+                      const DropdownMenuItem(
+                        value: null,
+                        child: Text('Semua'),
+                      ),
+                      ...ReportStatus.values.map(
+                        (s) => DropdownMenuItem(
+                          value: s,
+                          child: Text(s.label),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              const SizedBox(height: 4),
+              if (filteredList.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 24),
+                  child: Center(child: Text('Belum ada laporan untuk ditinjau')),
+                )
+              else
+                ...filteredList.map(
+                  (r) => _AdminCard(
+                    report: r,
+                    onSetStatus: (status) => rc.updateStatus(r.id, status),
+                  ),
+                ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _AdminStat extends StatelessWidget {
+  const _AdminStat({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.blue.shade50,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: const TextStyle(fontSize: 11)),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AdminCard extends StatelessWidget {
+  const _AdminCard({required this.report, required this.onSetStatus});
+
+  final Report report;
+  final void Function(ReportStatus) onSetStatus;
+
+  @override
+  Widget build(BuildContext context) {
+    final formatter = DateFormat('dd MMM yyyy • HH:mm');
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text(
+                  report.jenis,
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                ),
+                const Spacer(),
+                StatusChip(status: report.status),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              formatter.format(report.createdAt),
+              style: TextStyle(color: Colors.grey.shade600),
+            ),
+            const SizedBox(height: 10),
+            Text(report.deskripsi),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              children: [
+                _InfoChip(
+                  icon: Icons.person,
+                  label: report.nama,
+                ),
+                _InfoChip(
+                  icon: Icons.map,
+                  label: report.kecamatan,
+                ),
+                _InfoChip(
+                  icon: Icons.location_on,
+                  label:
+                      '${report.latitude.toStringAsFixed(4)}, ${report.longitude.toStringAsFixed(4)}',
+                ),
+                _InfoChip(
+                  icon: Icons.priority_high,
+                  label: 'Severity ${report.severity.toStringAsFixed(1)}',
+                ),
+                _InfoChip(
+                  icon: Icons.how_to_vote,
+                  label: '${report.votes} dukungan',
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                _StatusButton(
+                  target: ReportStatus.diterima,
+                  current: report.status,
+                  label: 'Diterima',
+                  color: Colors.orange,
+                  onTap: () => onSetStatus(ReportStatus.diterima),
+                ),
+                const SizedBox(width: 8),
+                _StatusButton(
+                  target: ReportStatus.proses,
+                  current: report.status,
+                  label: 'Proses',
+                  color: Colors.blue,
+                  onTap: () => onSetStatus(ReportStatus.proses),
+                ),
+                const SizedBox(width: 8),
+                _StatusButton(
+                  target: ReportStatus.selesai,
+                  current: report.status,
+                  label: 'Selesai',
+                  color: Colors.green,
+                  onTap: () => onSetStatus(ReportStatus.selesai),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _StatusButton extends StatelessWidget {
+  const _StatusButton({
+    required this.target,
+    required this.current,
+    required this.label,
+    required this.color,
+    required this.onTap,
+  });
+
+  final ReportStatus target;
+  final ReportStatus current;
+  final String label;
+  final MaterialColor color;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final active = target == current;
+    return Expanded(
+      child: ElevatedButton(
+        style: ElevatedButton.styleFrom(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          backgroundColor: active ? color.withOpacity(0.14) : Colors.grey.shade100,
+          foregroundColor: active ? color.shade700 : Colors.black87,
+        ),
+        onPressed: active ? null : onTap,
+        child: Text(label),
+      ),
+    );
   }
 }
 
@@ -1707,6 +2338,7 @@ class _ReportFormPageState extends State<ReportFormPage> {
   final deskripsiController = TextEditingController();
   String jenis = 'Banjir';
   double severity = 3;
+  String _selectedKecamatan = kecamatanPalembang.first;
   Position? position;
   String? _alamatJalan;
   bool _alamatLoading = false;
@@ -1731,6 +2363,7 @@ class _ReportFormPageState extends State<ReportFormPage> {
       deskripsiController.text = d.deskripsi;
       jenis = d.jenis;
       severity = d.severity;
+      _selectedKecamatan = d.kecamatan;
       if (d.fotoPath != null) fotoPath = d.fotoPath;
       if (d.fotoBase64 != null) {
         fotoBytes = base64Decode(d.fotoBase64!);
@@ -1770,6 +2403,21 @@ class _ReportFormPageState extends State<ReportFormPage> {
                   ),
                 ],
                 onChanged: (val) => setState(() => jenis = val ?? 'Banjir'),
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                value: _selectedKecamatan,
+                decoration: const InputDecoration(labelText: 'Kecamatan'),
+                items: kecamatanPalembang
+                    .map(
+                      (k) => DropdownMenuItem(
+                        value: k,
+                        child: Text(k),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (val) =>
+                    setState(() => _selectedKecamatan = val ?? kecamatanPalembang.first),
               ),
               const SizedBox(height: 12),
               TextFormField(
@@ -2143,11 +2791,14 @@ class _ReportFormPageState extends State<ReportFormPage> {
     }
 
     final controller = context.read<ReportController>();
+    final auth = context.read<AuthController>();
     await controller.addReport(
       nama: namaController.text,
       jenis: jenis,
       deskripsi: deskripsiController.text,
       severity: severity,
+      kecamatan: _selectedKecamatan,
+      owner: auth.userName ?? namaController.text,
       position: position!,
       fotoPath: fotoPath,
       fotoBytes: fotoBytes,
@@ -2162,6 +2813,7 @@ class _ReportFormPageState extends State<ReportFormPage> {
       jenis: jenis,
       deskripsi: deskripsiController.text,
       severity: severity,
+      kecamatan: _selectedKecamatan,
       fotoPath: fotoPath,
       fotoBase64: fotoBytes != null ? base64Encode(fotoBytes!) : null,
     );
