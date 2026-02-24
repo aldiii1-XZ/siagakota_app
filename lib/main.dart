@@ -448,9 +448,11 @@ class ReportController extends ChangeNotifier {
   bool _sortedDirty = true;
   final List<ReportDraft> _drafts = [];
   bool _draftLoaded = false;
+  bool _reportsLoaded = false;
 
   ReportController() {
     loadDrafts();
+    loadReports();
   }
 
   List<Report> get reports => List.unmodifiable(_reports);
@@ -501,6 +503,7 @@ class ReportController extends ChangeNotifier {
 
     _reports.insert(0, newReport);
     _sortedDirty = true;
+    await _persistReports();
     notifyListeners();
   }
 
@@ -546,6 +549,7 @@ class ReportController extends ChangeNotifier {
     if (idx == -1) return;
     _reports[idx].votes += 1;
     _sortedDirty = true;
+    _persistReports();
     notifyListeners();
   }
 
@@ -558,6 +562,7 @@ class ReportController extends ChangeNotifier {
       'Status laporan berubah',
       '${_reports[idx].jenis} kini ${status.label}',
     );
+    _persistReports();
     notifyListeners();
   }
 
@@ -585,6 +590,36 @@ class ReportController extends ChangeNotifier {
 
   double _mockWeatherRisk(double lat, double lng) {
     return 0.5;
+  }
+
+  Future<void> _persistReports() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final list = _reports.map((r) => r.toJson()).toList();
+      await prefs.setString('reports', jsonEncode(list));
+    } catch (_) {
+      // abaikan kegagalan simpan
+    }
+  }
+
+  Future<void> loadReports() async {
+    if (_reportsLoaded) return;
+    _reportsLoaded = true;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString('reports');
+      if (raw == null) return;
+      final list = (jsonDecode(raw) as List)
+          .map((e) => Report.fromJson(Map<String, dynamic>.from(e)))
+          .toList();
+      _reports
+        ..clear()
+        ..addAll(list);
+      _sortedDirty = true;
+      notifyListeners();
+    } catch (_) {
+      // abaikan jika gagal parse
+    }
   }
 
   List<Hotspot> computeHotspots({
