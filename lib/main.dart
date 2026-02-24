@@ -1,4 +1,6 @@
 import 'dart:io' show File, Platform;
+import 'dart:convert';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
@@ -10,12 +12,18 @@ import 'package:uuid/uuid.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:pdf/pdf.dart' as pdf;
 import 'package:share_plus/share_plus.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+
+final NotificationService notificationService = NotificationService();
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  notificationService.init();
   runApp(
     MultiProvider(
       providers: [
@@ -104,6 +112,32 @@ class AuthController extends ChangeNotifier {
   }
 }
 
+class NotificationService {
+  final _plugin = FlutterLocalNotificationsPlugin();
+  bool _initialized = false;
+
+  Future<void> init() async {
+    if (kIsWeb || _initialized) return;
+    const android = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const settings = InitializationSettings(android: android);
+    await _plugin.initialize(settings);
+    _initialized = true;
+  }
+
+  Future<void> showStatusChange(String title, String body) async {
+    if (kIsWeb || !_initialized) return;
+    const androidDetails = AndroidNotificationDetails(
+      'status_channel',
+      'Status Laporan',
+      channelDescription: 'Notifikasi perubahan status laporan',
+      importance: Importance.high,
+      priority: Priority.high,
+    );
+    const notifDetails = NotificationDetails(android: androidDetails);
+    await _plugin.show(DateTime.now().millisecond, title, body, notifDetails);
+  }
+}
+
 class SiagaKotaApp extends StatelessWidget {
   const SiagaKotaApp({super.key});
 
@@ -113,7 +147,57 @@ class SiagaKotaApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'SiagaKota',
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
+        scaffoldBackgroundColor: const Color(0xFFF7F8FB),
+        appBarTheme: const AppBarTheme(
+          backgroundColor: Colors.white,
+          elevation: 0.6,
+          foregroundColor: Colors.black87,
+          centerTitle: false,
+          titleTextStyle: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            color: Colors.black87,
+          ),
+        ),
+        cardTheme: CardThemeData(
+          elevation: 0,
+          color: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+          margin: EdgeInsets.zero,
+        ),
+        elevatedButtonTheme: ElevatedButtonThemeData(
+          style: ElevatedButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            textStyle: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+        ),
+        outlinedButtonTheme: OutlinedButtonThemeData(
+          style: OutlinedButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            side: const BorderSide(color: Color(0xFFCBD5E1)),
+            textStyle: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+        ),
+        floatingActionButtonTheme: const FloatingActionButtonThemeData(
+          backgroundColor: Colors.indigo,
+          foregroundColor: Colors.white,
+          extendedPadding: EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+        ),
+        snackBarTheme: const SnackBarThemeData(
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.all(Radius.circular(12)),
+          ),
+        ),
         useMaterial3: true,
       ),
       home: const AuthGate(),
@@ -170,6 +254,13 @@ extension ReportStatusText on ReportStatus {
   }
 }
 
+Color severityColor(double severity) {
+  if (severity >= 4) return Colors.red.shade600;
+  if (severity >= 3) return Colors.deepOrange.shade400;
+  if (severity >= 2) return Colors.amber.shade600;
+  return Colors.green.shade600;
+}
+
 class Report {
   final String id;
   final String nama;
@@ -180,6 +271,7 @@ class Report {
   final double severity; // 1..5
   final String? fotoPath;
   final Uint8List? fotoBytes;
+  final double? accuracyMeters;
   final DateTime createdAt;
   ReportStatus status;
   int votes;
@@ -196,6 +288,7 @@ class Report {
     required this.severity,
     required this.fotoPath,
     required this.fotoBytes,
+    required this.accuracyMeters,
     required this.createdAt,
     this.status = ReportStatus.diterima,
     this.votes = 0,
@@ -206,13 +299,56 @@ class Report {
   double get priorityScore => severity * 2 + votes + weatherRisk;
 }
 
+class ReportDraft {
+  final String nama;
+  final String jenis;
+  final String deskripsi;
+  final double severity;
+  final String? fotoPath;
+  final String? fotoBase64;
+
+  ReportDraft({
+    required this.nama,
+    required this.jenis,
+    required this.deskripsi,
+    required this.severity,
+    this.fotoPath,
+    this.fotoBase64,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'nama': nama,
+    'jenis': jenis,
+    'deskripsi': deskripsi,
+    'severity': severity,
+    'fotoPath': fotoPath,
+    'fotoBase64': fotoBase64,
+  };
+
+  factory ReportDraft.fromJson(Map<String, dynamic> json) => ReportDraft(
+    nama: json['nama'] as String,
+    jenis: json['jenis'] as String? ?? 'Banjir',
+    deskripsi: json['deskripsi'] as String? ?? '',
+    severity: (json['severity'] as num?)?.toDouble() ?? 3,
+    fotoPath: json['fotoPath'] as String?,
+    fotoBase64: json['fotoBase64'] as String?,
+  );
+}
+
 class ReportController extends ChangeNotifier {
   final List<Report> _reports = [];
   final _uuid = const Uuid();
   final List<Report> _sortedCache = [];
   bool _sortedDirty = true;
+  final List<ReportDraft> _drafts = [];
+  bool _draftLoaded = false;
+
+  ReportController() {
+    loadDrafts();
+  }
 
   List<Report> get reports => List.unmodifiable(_reports);
+  List<ReportDraft> get drafts => List.unmodifiable(_drafts);
   List<Report> get sortedReports {
     if (_sortedDirty) {
       _sortedCache
@@ -243,6 +379,7 @@ class ReportController extends ChangeNotifier {
       severity: severity,
       fotoPath: fotoPath,
       fotoBytes: fotoBytes,
+      accuracyMeters: position.accuracy.isFinite ? position.accuracy : null,
       createdAt: DateTime.now(),
       weatherRisk: _mockWeatherRisk(position.latitude, position.longitude),
     );
@@ -255,6 +392,43 @@ class ReportController extends ChangeNotifier {
     _reports.insert(0, newReport);
     _sortedDirty = true;
     notifyListeners();
+  }
+
+  Future<void> addDraft(ReportDraft draft) async {
+    _drafts.insert(0, draft);
+    await _persistDrafts();
+    notifyListeners();
+  }
+
+  Future<void> removeDraft(ReportDraft draft) async {
+    _drafts.remove(draft);
+    await _persistDrafts();
+    notifyListeners();
+  }
+
+  Future<void> _persistDrafts() async {
+    final prefs = await SharedPreferences.getInstance();
+    final list = _drafts.map((d) => d.toJson()).toList();
+    prefs.setString('drafts', jsonEncode(list));
+  }
+
+  Future<void> loadDrafts() async {
+    if (_draftLoaded) return;
+    _draftLoaded = true;
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('drafts');
+    if (raw == null) return;
+    try {
+      final list = (jsonDecode(raw) as List)
+          .map((e) => ReportDraft.fromJson(Map<String, dynamic>.from(e)))
+          .toList();
+      _drafts
+        ..clear()
+        ..addAll(list);
+      notifyListeners();
+    } catch (_) {
+      // ignore corrupt drafts
+    }
   }
 
   void upvote(String id) {
@@ -270,6 +444,10 @@ class ReportController extends ChangeNotifier {
     if (idx == -1) return;
     _reports[idx].status = status;
     _sortedDirty = true;
+    notificationService.showStatusChange(
+      'Status laporan berubah',
+      '${_reports[idx].jenis} kini ${status.label}',
+    );
     notifyListeners();
   }
 
@@ -314,12 +492,30 @@ class _HomeShellState extends State<HomeShell>
   bool _locLoading = false;
   String? _locError;
   String? _locLabel;
+  bool _permAsked = false;
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
-    _ambilLokasiAwal();
+    _tabController = TabController(length: 3, vsync: this);
+    _tabController.addListener(_handleTabChange);
+    _initLocationFlow();
+  }
+
+  @override
+  void dispose() {
+    _tabController.removeListener(_handleTabChange);
+    _tabController.dispose();
+    super.dispose();
+  }
+
+  void _handleTabChange() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _initLocationFlow() async {
+    final ok = await _ensureLocationPermission();
+    if (mounted && ok) await _ambilLokasiAwal();
   }
 
   @override
@@ -335,6 +531,7 @@ class _HomeShellState extends State<HomeShell>
             error: _locError,
             label: _locLabel,
             onRefresh: _ambilLokasiAwal,
+            onShowError: _showLocError,
           ),
           const SizedBox(width: 6),
           IconButton(
@@ -354,25 +551,34 @@ class _HomeShellState extends State<HomeShell>
           tabs: const [
             Tab(text: 'Laporan'),
             Tab(text: 'Dashboard'),
+            Tab(text: 'Peta'),
           ],
         ),
       ),
       body: TabBarView(
         controller: _tabController,
-        children: [const ReportListView(), const DashboardView()],
+        children: [
+          const ReportListView(),
+          const DashboardView(),
+          Consumer<ReportController>(
+            builder: (context, rc, child) => MapView(
+              reportsProvider: rc,
+              currentPosition: _currentPosition,
+              onRefreshLocation: _ambilLokasiAwal,
+            ),
+          ),
+        ],
       ),
-      floatingActionButton: _tabController.index == 0
-          ? FloatingActionButton.extended(
-              onPressed: () async {
-                await Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const ReportFormPage()),
-                );
-              },
-              icon: const Icon(Icons.add),
-              label: const Text('Buat Laporan'),
-            )
-          : null,
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () async {
+          await Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const ReportFormPage()),
+          );
+        },
+        icon: const Icon(Icons.add),
+        label: const Text('Buat Laporan'),
+      ),
     );
   }
 
@@ -383,23 +589,9 @@ class _HomeShellState extends State<HomeShell>
       _locLabel = null;
     });
     try {
-      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
-        setState(() => _locError = 'Layanan lokasi belum aktif');
-        return;
-      }
-      var permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-      }
-      if (permission == LocationPermission.deniedForever ||
-          permission == LocationPermission.denied) {
-        setState(() => _locError = 'Izin lokasi ditolak');
-        return;
-      }
-      final pos = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-      );
+      final pos = await _getPrecisePosition();
+      if (pos == null) return;
+      _locError = null; // clear previous errors on success
       String? label;
       try {
         final places = await placemarkFromCoordinates(
@@ -426,11 +618,116 @@ class _HomeShellState extends State<HomeShell>
       });
     } catch (e) {
       setState(() => _locError = 'Gagal ambil lokasi: $e');
+      _showLocError();
     } finally {
       if (mounted) {
         setState(() => _locLoading = false);
       }
     }
+  }
+
+  Future<bool> _ensureLocationPermission() async {
+    if (_permAsked) return true;
+    _permAsked = true;
+
+    Future<bool> request() async {
+      final res = await Geolocator.requestPermission();
+      return res == LocationPermission.always ||
+          res == LocationPermission.whileInUse;
+    }
+
+    var status = await Geolocator.checkPermission();
+    if (status == LocationPermission.always ||
+        status == LocationPermission.whileInUse) {
+      return true;
+    }
+
+    if (!mounted) return false;
+    final granted =
+        await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (ctx) => AlertDialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+            title: const Text('Izinkan lokasi'),
+            content: const Text(
+              'Kami memerlukan akses lokasi untuk menunjukkan laporan terdekat dan mengisi koordinat Anda secara otomatis.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(ctx, false);
+                },
+                child: const Text('Tolak'),
+              ),
+              ElevatedButton(
+                onPressed: () async {
+                  final res = await request();
+                  if (!context.mounted) return;
+                  Navigator.pop(ctx, res);
+                },
+                child: const Text('Izinkan'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+
+    if (!granted) {
+      _locError = 'Izin lokasi ditolak';
+      _showLocError();
+      return false;
+    }
+    return true;
+  }
+
+  Future<Position?> _getPrecisePosition() async {
+    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      setState(() => _locError = 'Layanan lokasi belum aktif');
+      _showLocError();
+      return null;
+    }
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      final granted = await _ensureLocationPermission();
+      if (!granted) return null;
+      permission = await Geolocator.checkPermission();
+      if (permission != LocationPermission.always &&
+          permission != LocationPermission.whileInUse) {
+        setState(() => _locError = 'Izin lokasi ditolak');
+        _showLocError();
+        return null;
+      }
+    }
+
+    Position? pos;
+    try {
+      pos = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.best,
+        timeLimit: const Duration(seconds: 10),
+      );
+    } on TimeoutException catch (_) {
+      pos = await Geolocator.getLastKnownPosition();
+    } catch (_) {
+      pos = await Geolocator.getLastKnownPosition();
+    }
+
+    if (pos == null) {
+      setState(() => _locError = 'Gagal ambil lokasi (tidak ada data GPS)');
+      _showLocError();
+    }
+    return pos;
+  }
+
+  void _showLocError() {
+    if (!mounted || _locError == null) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(_locError!)));
   }
 }
 
@@ -568,21 +865,93 @@ class ReportListView extends StatelessWidget {
     return Consumer<ReportController>(
       builder: (context, controller, _) {
         final items = controller.sortedReports;
+        final drafts = controller.drafts;
 
         if (items.isEmpty) {
-          return const Center(child: Text('Belum ada laporan'));
+          return ListView(
+            padding: const EdgeInsets.all(12),
+            children: [
+              if (drafts.isNotEmpty)
+                DraftsBanner(drafts: drafts, controller: controller),
+              const Center(
+                child: Padding(
+                  padding: EdgeInsets.symmetric(vertical: 40),
+                  child: Text('Belum ada laporan'),
+                ),
+              ),
+            ],
+          );
         }
 
         return ListView.separated(
           padding: const EdgeInsets.all(12),
-          itemCount: items.length,
+          itemCount: items.length + (drafts.isNotEmpty ? 1 : 0),
           separatorBuilder: (_, index) => const SizedBox(height: 10),
           itemBuilder: (context, index) {
+            if (drafts.isNotEmpty) {
+              if (index == 0) {
+                return DraftsBanner(drafts: drafts, controller: controller);
+              }
+              final report = items[index - 1];
+              return ReportCard(report: report);
+            }
             final report = items[index];
             return ReportCard(report: report);
           },
         );
       },
+    );
+  }
+}
+
+class DraftsBanner extends StatelessWidget {
+  const DraftsBanner({
+    super.key,
+    required this.drafts,
+    required this.controller,
+  });
+
+  final List<ReportDraft> drafts;
+  final ReportController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Draft laporan',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: drafts
+                  .map(
+                    (d) => InputChip(
+                      label: Text(d.jenis),
+                      avatar: const Icon(Icons.drafts, size: 18),
+                      onPressed: () async {
+                        await Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => ReportFormPage(draft: d),
+                          ),
+                        );
+                        await controller.removeDraft(d);
+                      },
+                      onDeleted: () => controller.removeDraft(d),
+                    ),
+                  )
+                  .toList(),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -598,58 +967,84 @@ class ReportCard extends StatelessWidget {
     final formatter = DateFormat('dd MMM HH:mm');
 
     return Card(
-      elevation: 2,
+      elevation: 0,
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                Expanded(
+                Container(
+                  height: 36,
+                  width: 36,
+                  decoration: BoxDecoration(
+                    color: severityColor(
+                      report.severity,
+                    ).withAlpha((0.15 * 255).round()),
+                    shape: BoxShape.circle,
+                  ),
+                  alignment: Alignment.center,
                   child: Text(
-                    report.jenis,
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
+                    report.severity.toStringAsFixed(1),
+                    style: TextStyle(
+                      color: severityColor(report.severity),
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12,
                     ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        report.jenis,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        formatter.format(report.createdAt),
+                        style: TextStyle(color: Colors.grey.shade600),
+                      ),
+                    ],
                   ),
                 ),
                 StatusChip(status: report.status),
               ],
             ),
-            const SizedBox(height: 6),
-            Text(report.deskripsi),
-            const SizedBox(height: 6),
+            const SizedBox(height: 10),
+            Text(report.deskripsi, style: const TextStyle(fontSize: 14)),
+            const SizedBox(height: 10),
             Wrap(
               spacing: 8,
-              runSpacing: 4,
+              runSpacing: 6,
               children: [
                 _InfoChip(icon: Icons.place, label: _coordLabel(report)),
-                _InfoChip(
-                  icon: Icons.schedule,
-                  label: formatter.format(report.createdAt),
-                ),
-                _InfoChip(
-                  icon: Icons.emergency,
-                  label: 'Severity ${report.severity.toStringAsFixed(1)}',
-                ),
                 if (report.duplicateOf != null)
                   _InfoChip(icon: Icons.link, label: 'Duplikasi'),
+                _InfoChip(
+                  icon: Icons.how_to_vote,
+                  label: '${report.votes} dukungan',
+                ),
               ],
             ),
             if (report.fotoBytes != null || report.fotoPath != null) ...[
-              const SizedBox(height: 8),
+              const SizedBox(height: 10),
               ClipRRect(
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(10),
                 child: report.fotoBytes != null
                     ? Image.memory(
                         report.fotoBytes!,
-                        height: 140,
+                        height: 160,
                         width: double.infinity,
                         fit: BoxFit.cover,
                         errorBuilder: (context, error, stack) => Container(
-                          height: 140,
+                          height: 160,
                           color: Colors.grey.shade200,
                           alignment: Alignment.center,
                           child: const Text('Foto tidak dapat dimuat'),
@@ -657,14 +1052,14 @@ class ReportCard extends StatelessWidget {
                       )
                     : Image.file(
                         File(report.fotoPath!),
-                        height: 140,
+                        height: 160,
                         width: double.infinity,
                         cacheHeight: 720,
                         cacheWidth: 1280,
                         filterQuality: FilterQuality.medium,
                         fit: BoxFit.cover,
                         errorBuilder: (context, error, stack) => Container(
-                          height: 140,
+                          height: 160,
                           color: Colors.grey.shade200,
                           alignment: Alignment.center,
                           child: const Text('Foto tidak dapat dimuat'),
@@ -672,12 +1067,13 @@ class ReportCard extends StatelessWidget {
                       ),
               ),
             ],
-            const SizedBox(height: 8),
+            const SizedBox(height: 12),
             Row(
               children: [
                 IconButton(
                   onPressed: () => controller.upvote(report.id),
                   icon: const Icon(Icons.thumb_up_alt_outlined),
+                  color: Colors.indigo,
                 ),
                 Text('${report.votes}'),
                 const Spacer(),
@@ -745,6 +1141,7 @@ class _LocationBadge extends StatelessWidget {
     required this.error,
     required this.label,
     required this.onRefresh,
+    required this.onShowError,
   });
 
   final Position? position;
@@ -752,6 +1149,7 @@ class _LocationBadge extends StatelessWidget {
   final String? error;
   final String? label;
   final Future<void> Function() onRefresh;
+  final VoidCallback onShowError;
 
   @override
   Widget build(BuildContext context) {
@@ -767,20 +1165,33 @@ class _LocationBadge extends StatelessWidget {
 
     return Padding(
       padding: const EdgeInsets.only(right: 4),
-      child: OutlinedButton.icon(
-        style: OutlinedButton.styleFrom(
-          visualDensity: VisualDensity.compact,
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 180),
+        child: OutlinedButton.icon(
+          style: OutlinedButton.styleFrom(
+            visualDensity: VisualDensity.compact,
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          ),
+          onPressed: loading
+              ? null
+              : () async {
+                  await onRefresh();
+                  if (error != null) onShowError();
+                },
+          icon: Icon(
+            loading ? Icons.timelapse : Icons.my_location,
+            size: 18,
+            color: loading
+                ? Colors.blueGrey
+                : (error != null ? Colors.red : Colors.blue),
+          ),
+          label: Text(
+            text,
+            overflow: TextOverflow.ellipsis,
+            maxLines: 1,
+            style: const TextStyle(fontSize: 12),
+          ),
         ),
-        onPressed: loading ? null : onRefresh,
-        icon: Icon(
-          loading ? Icons.timelapse : Icons.my_location,
-          size: 18,
-          color: loading
-              ? Colors.blueGrey
-              : (error != null ? Colors.red : Colors.blue),
-        ),
-        label: Text(text, style: const TextStyle(fontSize: 12)),
       ),
     );
   }
@@ -939,10 +1350,13 @@ class DashboardView extends StatelessWidget {
         '${_csv(r.jenis)},${_csv(r.nama)},${_csv(r.deskripsi)},${r.severity},${r.status.label},${r.latitude},${r.longitude},${r.createdAt.toIso8601String()}',
       );
     }
-    final dir = await getTemporaryDirectory();
-    final file = File('${dir.path}/siagakota_export.csv');
-    await file.writeAsString(buffer.toString());
-    await Share.shareXFiles([XFile(file.path)], text: 'Export data SiagaKota');
+    final bytes = utf8.encode(buffer.toString());
+    final file = XFile.fromData(
+      bytes,
+      mimeType: 'text/csv',
+      name: 'siagakota_export.csv',
+    );
+    await Share.shareXFiles([file], text: 'Export data SiagaKota');
   }
 
   Future<void> _exportDoc(List<Report> data) async {
@@ -954,10 +1368,13 @@ class DashboardView extends StatelessWidget {
         '- ${r.jenis} | ${r.nama} | ${r.deskripsi} | Severity ${r.severity} | ${r.status.label} | ${r.latitude.toStringAsFixed(4)}, ${r.longitude.toStringAsFixed(4)} | ${DateFormat('dd MMM yyyy HH:mm').format(r.createdAt)}',
       );
     }
-    final dir = await getTemporaryDirectory();
-    final file = File('${dir.path}/siagakota_export.doc');
-    await file.writeAsString(buffer.toString());
-    await Share.shareXFiles([XFile(file.path)], text: 'Export DOC SiagaKota');
+    final bytes = utf8.encode(buffer.toString());
+    final file = XFile.fromData(
+      bytes,
+      mimeType: 'application/msword',
+      name: 'siagakota_export.doc',
+    );
+    await Share.shareXFiles([file], text: 'Export DOC SiagaKota');
   }
 
   Future<void> _exportPdf(
@@ -1016,10 +1433,12 @@ class DashboardView extends StatelessWidget {
       return;
     }
 
-    final dir = await getTemporaryDirectory();
-    final file = File('${dir.path}/siagakota_export.pdf');
-    await file.writeAsBytes(bytes);
-    await Share.shareXFiles([XFile(file.path)], text: 'Export PDF SiagaKota');
+    final file = XFile.fromData(
+      bytes,
+      mimeType: 'application/pdf',
+      name: 'siagakota_export.pdf',
+    );
+    await Share.shareXFiles([file], text: 'Export PDF SiagaKota');
   }
 
   String _csv(String value) {
@@ -1031,6 +1450,121 @@ class DashboardView extends StatelessWidget {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(msg), duration: const Duration(seconds: 2)),
     );
+  }
+}
+
+class MapView extends StatelessWidget {
+  const MapView({
+    super.key,
+    required this.reportsProvider,
+    required this.currentPosition,
+    required this.onRefreshLocation,
+  });
+
+  final ReportController reportsProvider;
+  final Position? currentPosition;
+  final Future<void> Function() onRefreshLocation;
+
+  @override
+  Widget build(BuildContext context) {
+    final reports = reportsProvider.reports;
+    final markers = <Marker>[
+      if (currentPosition != null)
+        Marker(
+          point: LatLng(currentPosition!.latitude, currentPosition!.longitude),
+          width: 40,
+          height: 40,
+          child: const Icon(Icons.my_location, color: Colors.blue),
+        ),
+      ...reports.map(
+        (r) => Marker(
+          point: LatLng(r.latitude, r.longitude),
+          width: 42,
+          height: 42,
+          child: Tooltip(
+            message: '${r.jenis}\n${r.status.label}',
+            child: const Icon(Icons.location_on, color: Colors.red),
+          ),
+        ),
+      ),
+    ];
+
+    final center = currentPosition != null
+        ? LatLng(currentPosition!.latitude, currentPosition!.longitude)
+        : (reports.isNotEmpty
+              ? LatLng(reports.first.latitude, reports.first.longitude)
+              : const LatLng(-6.2000, 106.8166));
+
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Row(
+            children: [
+              ElevatedButton.icon(
+                onPressed: onRefreshLocation,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Segarkan lokasi'),
+              ),
+              const SizedBox(width: 8),
+              ElevatedButton.icon(
+                onPressed: () => _openNearestNavigation(),
+                icon: const Icon(Icons.directions),
+                label: const Text('Arahkan ke laporan terdekat'),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: FlutterMap(
+            options: MapOptions(
+              initialCenter: center,
+              initialZoom: 13,
+              minZoom: 3,
+              maxZoom: 18,
+            ),
+            children: [
+              TileLayer(
+                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                userAgentPackageName: 'com.example.siagakota',
+              ),
+              MarkerLayer(markers: markers),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _openNearestNavigation() async {
+    if (currentPosition == null || reportsProvider.reports.isEmpty) return;
+    final nearest = _nearestReport();
+    final lat = nearest.latitude;
+    final lng = nearest.longitude;
+    final uri = Uri.parse(
+      'https://www.google.com/maps/dir/?api=1&destination=$lat,$lng&travelmode=driving',
+    );
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  Report _nearestReport() {
+    final d = Distance();
+    final origin = LatLng(
+      currentPosition!.latitude,
+      currentPosition!.longitude,
+    );
+    Report? nearest;
+    double best = double.infinity;
+    for (final r in reportsProvider.reports) {
+      final dist = d(origin, LatLng(r.latitude, r.longitude));
+      if (dist < best) {
+        best = dist;
+        nearest = r;
+      }
+    }
+    return nearest ?? reportsProvider.reports.first;
   }
 }
 
@@ -1065,7 +1599,9 @@ class _StatCard extends StatelessWidget {
 }
 
 class ReportFormPage extends StatefulWidget {
-  const ReportFormPage({super.key});
+  const ReportFormPage({super.key, this.draft});
+
+  final ReportDraft? draft;
 
   @override
   State<ReportFormPage> createState() => _ReportFormPageState();
@@ -1090,137 +1626,169 @@ class _ReportFormPageState extends State<ReportFormPage> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    final d = widget.draft;
+    if (d != null) {
+      namaController.text = d.nama;
+      deskripsiController.text = d.deskripsi;
+      jenis = d.jenis;
+      severity = d.severity;
+      if (d.fotoPath != null) fotoPath = d.fotoPath;
+      if (d.fotoBase64 != null) {
+        fotoBytes = base64Decode(d.fotoBase64!);
+      }
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Buat Laporan')),
-      body: Form(
-        key: _formKey,
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            TextFormField(
-              controller: namaController,
-              decoration: const InputDecoration(labelText: 'Nama Pelapor'),
-              validator: (v) =>
-                  (v == null || v.isEmpty) ? 'Masukkan nama' : null,
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              initialValue: jenis,
-              decoration: const InputDecoration(labelText: 'Jenis laporan'),
-              items: const [
-                DropdownMenuItem(value: 'Banjir', child: Text('Banjir')),
-                DropdownMenuItem(
-                  value: 'Infrastruktur Rusak',
-                  child: Text('Infrastruktur Rusak'),
-                ),
-                DropdownMenuItem(
-                  value: 'Pohon Tumbang',
-                  child: Text('Pohon tumbang'),
-                ),
-              ],
-              onChanged: (val) => setState(() => jenis = val ?? 'Banjir'),
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: deskripsiController,
-              decoration: const InputDecoration(labelText: 'Deskripsi'),
-              maxLines: 3,
-              validator: (v) =>
-                  (v == null || v.isEmpty) ? 'Masukkan deskripsi' : null,
-            ),
-            const SizedBox(height: 12),
-            Text('Tingkat keparahan'),
-            Slider(
-              value: severity,
-              min: 1,
-              max: 5,
-              divisions: 4,
-              label: severity.toStringAsFixed(1),
-              onChanged: (val) => setState(() => severity = val),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: loadingLocation ? null : _ambilLokasi,
-                    icon: const Icon(Icons.my_location),
-                    label: Text(
-                      loadingLocation ? 'Mengambil...' : 'Ambil lokasi GPS',
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            if (position != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Text(
-                  'Lokasi: ${position!.latitude.toStringAsFixed(4)}, ${position!.longitude.toStringAsFixed(4)}',
-                  style: const TextStyle(color: Colors.green),
-                ),
+      body: SafeArea(
+        child: Form(
+          key: _formKey,
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+            children: [
+              TextFormField(
+                controller: namaController,
+                decoration: const InputDecoration(labelText: 'Nama Pelapor'),
+                validator: (v) =>
+                    (v == null || v.isEmpty) ? 'Masukkan nama' : null,
               ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                ElevatedButton.icon(
-                  onPressed: _pickFoto,
-                  icon: const Icon(Icons.photo_camera),
-                  label: const Text('Tambah foto'),
-                ),
-                const SizedBox(width: 12),
-                if (fotoPath != null)
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                initialValue: jenis,
+                decoration: const InputDecoration(labelText: 'Jenis laporan'),
+                items: const [
+                  DropdownMenuItem(value: 'Banjir', child: Text('Banjir')),
+                  DropdownMenuItem(
+                    value: 'Infrastruktur Rusak',
+                    child: Text('Infrastruktur Rusak'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'Pohon Tumbang',
+                    child: Text('Pohon tumbang'),
+                  ),
+                ],
+                onChanged: (val) => setState(() => jenis = val ?? 'Banjir'),
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: deskripsiController,
+                decoration: const InputDecoration(labelText: 'Deskripsi'),
+                maxLines: 3,
+                validator: (v) =>
+                    (v == null || v.isEmpty) ? 'Masukkan deskripsi' : null,
+              ),
+              const SizedBox(height: 12),
+              Text('Tingkat keparahan'),
+              Slider(
+                value: severity,
+                min: 1,
+                max: 5,
+                divisions: 4,
+                label: severity.toStringAsFixed(1),
+                onChanged: (val) => setState(() => severity = val),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
                   Expanded(
-                    child: Text(
-                      File(fotoPath!).path.split(Platform.pathSeparator).last,
-                      overflow: TextOverflow.ellipsis,
+                    child: ElevatedButton.icon(
+                      onPressed: loadingLocation ? null : _ambilLokasi,
+                      icon: const Icon(Icons.my_location),
+                      label: Text(
+                        loadingLocation ? 'Mengambil...' : 'Ambil lokasi GPS',
+                      ),
                     ),
                   ),
-                if (fotoBytes != null)
-                  const Expanded(
-                    child: Text(
-                      'Foto terpilih',
-                      overflow: TextOverflow.ellipsis,
-                    ),
+                ],
+              ),
+              if (position != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    'Lokasi: ${position!.latitude.toStringAsFixed(4)}, ${position!.longitude.toStringAsFixed(4)}',
+                    style: const TextStyle(color: Colors.green),
                   ),
-              ],
-            ),
-            if (fotoPath != null || fotoBytes != null) ...[
-              const SizedBox(height: 10),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: SizedBox(
-                  height: 180,
-                  width: double.infinity,
-                  child: fotoBytes != null
-                      ? Image.memory(
-                          fotoBytes!,
-                          fit: BoxFit.cover,
-                          errorBuilder: (context, error, stack) => Container(
-                            color: Colors.grey.shade200,
-                            alignment: Alignment.center,
-                            child: const Text('Foto tidak dapat dimuat'),
-                          ),
-                        )
-                      : Image.file(
-                          File(fotoPath!),
-                          fit: BoxFit.cover,
-                          errorBuilder: (context, error, stack) => Container(
-                            color: Colors.grey.shade200,
-                            alignment: Alignment.center,
-                            child: const Text('Foto tidak dapat dimuat'),
-                          ),
-                        ),
                 ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  ElevatedButton.icon(
+                    onPressed: _pickFoto,
+                    icon: const Icon(Icons.photo_camera),
+                    label: const Text('Tambah foto'),
+                  ),
+                  const SizedBox(width: 12),
+                  if (fotoPath != null)
+                    Expanded(
+                      child: Text(
+                        File(fotoPath!).path.split(Platform.pathSeparator).last,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  if (fotoBytes != null)
+                    const Expanded(
+                      child: Text(
+                        'Foto terpilih',
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                ],
+              ),
+              if (fotoPath != null || fotoBytes != null) ...[
+                const SizedBox(height: 10),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: SizedBox(
+                    height: 180,
+                    width: double.infinity,
+                    child: fotoBytes != null
+                        ? Image.memory(
+                            fotoBytes!,
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stack) => Container(
+                              color: Colors.grey.shade200,
+                              alignment: Alignment.center,
+                              child: const Text('Foto tidak dapat dimuat'),
+                            ),
+                          )
+                        : Image.file(
+                            File(fotoPath!),
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stack) => Container(
+                              color: Colors.grey.shade200,
+                              alignment: Alignment.center,
+                              child: const Text('Foto tidak dapat dimuat'),
+                            ),
+                          ),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: _saveDraft,
+                      icon: const Icon(Icons.save_alt),
+                      label: const Text('Simpan draft'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: _submit,
+                      child: const Text('Kirim laporan'),
+                    ),
+                  ),
+                ],
               ),
             ],
-            const SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: _submit,
-              child: const Text('Kirim laporan'),
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -1229,32 +1797,8 @@ class _ReportFormPageState extends State<ReportFormPage> {
   Future<void> _ambilLokasi() async {
     setState(() => loadingLocation = true);
     try {
-      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!mounted) return;
-      if (!serviceEnabled) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Aktifkan layanan lokasi')),
-        );
-        return;
-      }
-
-      var permission = await Geolocator.checkPermission();
-      if (!mounted) return;
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-        if (!mounted) return;
-      }
-      if (permission == LocationPermission.deniedForever ||
-          permission == LocationPermission.denied) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Izin lokasi ditolak')));
-        return;
-      }
-
-      final pos = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-      );
+      final pos = await _getPrecisePosition();
+      if (pos == null) return;
       if (!mounted) return;
       setState(() => position = pos);
     } catch (e) {
@@ -1269,25 +1813,65 @@ class _ReportFormPageState extends State<ReportFormPage> {
     }
   }
 
+  Future<Position?> _getPrecisePosition() async {
+    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Aktifkan layanan lokasi')),
+        );
+      }
+      return null;
+    }
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+    if (permission == LocationPermission.deniedForever ||
+        permission == LocationPermission.denied) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Izin lokasi ditolak')));
+      }
+      return null;
+    }
+
+    try {
+      return await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.bestForNavigation,
+        timeLimit: const Duration(seconds: 8),
+      );
+    } on TimeoutException catch (_) {
+      return await Geolocator.getLastKnownPosition();
+    } catch (_) {
+      return await Geolocator.getLastKnownPosition();
+    }
+  }
+
   Future<void> _pickFoto() async {
     final picker = ImagePicker();
+    final source = await _selectSource();
+    if (source == null) return;
+
     final file = await picker.pickImage(
-      source: ImageSource.gallery,
-      imageQuality: 65,
+      source: source,
+      imageQuality: 70,
+      maxWidth: 1600,
     );
-    if (file != null) {
-      if (kIsWeb) {
-        final bytes = await file.readAsBytes();
-        setState(() {
-          fotoBytes = bytes;
-          fotoPath = null;
-        });
-      } else {
-        setState(() {
-          fotoPath = file.path;
-          fotoBytes = null;
-        });
-      }
+    if (file == null) return;
+
+    if (kIsWeb) {
+      final bytes = await file.readAsBytes();
+      setState(() {
+        fotoBytes = bytes;
+        fotoPath = null;
+      });
+    } else {
+      setState(() {
+        fotoPath = file.path;
+        fotoBytes = null;
+      });
     }
   }
 
@@ -1297,6 +1881,14 @@ class _ReportFormPageState extends State<ReportFormPage> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Ambil lokasi GPS dulu')));
+      return;
+    }
+    if ((jenis == 'Infrastruktur Rusak' || jenis == 'Pohon Tumbang') &&
+        fotoPath == null &&
+        fotoBytes == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Jenis ini memerlukan foto')),
+      );
       return;
     }
 
@@ -1312,5 +1904,47 @@ class _ReportFormPageState extends State<ReportFormPage> {
     );
     if (!mounted) return;
     Navigator.pop(context);
+  }
+
+  Future<void> _saveDraft() async {
+    final draft = ReportDraft(
+      nama: namaController.text,
+      jenis: jenis,
+      deskripsi: deskripsiController.text,
+      severity: severity,
+      fotoPath: fotoPath,
+      fotoBase64: fotoBytes != null ? base64Encode(fotoBytes!) : null,
+    );
+    final controller = context.read<ReportController>();
+    await controller.addDraft(draft);
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Draft disimpan')));
+    Navigator.pop(context);
+  }
+
+  Future<ImageSource?> _selectSource() async {
+    if (kIsWeb) return ImageSource.gallery;
+    return showModalBottomSheet<ImageSource>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_library),
+              title: const Text('Ambil dari galeri'),
+              onTap: () => Navigator.pop(ctx, ImageSource.gallery),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_camera),
+              title: const Text('Ambil dari kamera'),
+              onTap: () => Navigator.pop(ctx, ImageSource.camera),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
