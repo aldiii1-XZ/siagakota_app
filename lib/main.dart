@@ -16,23 +16,25 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';/*  */
 import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'firebase_options.dart';
 import 'update_service.dart';
 
 final NotificationService notificationService = NotificationService();
 final CloudSyncService cloudSync = CloudSyncService();
-const String kPlayStoreUrl =
-    'https://play.google.com/store/apps/details?id=com.example.siagakota';
-const String kWebDownloadUrl = 'https://example.com/siagakota/download';
 const String kChangelogUrl = 'https://example.com/siagakota/changelog';
 const String kDefaultApkUrl = 'https://example.com/siagakota/app-latest.apk';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
   await notificationService.init();
   await cloudSync.init();
   final packageInfo = await PackageInfo.fromPlatform();
@@ -61,15 +63,11 @@ class CloudSyncService {
   Future<void> init() async {
     if (!enable) return;
     try {
-      const opts = FirebaseOptions(
-        apiKey: 'TODO_API_KEY',
-        appId: 'TODO_APP_ID',
-        messagingSenderId: 'TODO_MESSAGING_SENDER_ID',
-        projectId: 'TODO_PROJECT_ID',
-        authDomain: 'TODO_AUTH_DOMAIN',
-        storageBucket: 'TODO_STORAGE_BUCKET',
-      );
-      await Firebase.initializeApp(options: opts);
+      if (Firebase.apps.isEmpty) {
+        await Firebase.initializeApp(
+          options: DefaultFirebaseOptions.currentPlatform,
+        );
+      }
       _firestore = FirebaseFirestore.instance;
       _ready = true;
     } catch (_) {
@@ -154,17 +152,121 @@ class AppUpdateInfo {
   });
 }
 
+/// Representasi user yang disimpan di Firestore.
+class UserProfile {
+  final String id;
+  final String nama;
+  final String role;
+  final DateTime createdAt;
+
+  const UserProfile({
+    required this.id,
+    required this.nama,
+    required this.role,
+    required this.createdAt,
+  });
+}
+
+/// Layanan khusus untuk operasi Firestore terkait user.
+class UserService {
+  final FirebaseFirestore _db;
+  UserService({FirebaseFirestore? firestore})
+      : _db = firestore ?? FirebaseFirestore.instance;
+
+  Future<UserProfile> createUser({required String name, String role = 'user'}) async {
+    final docRef = await _db.collection('users').add({
+      'nama': name,
+      'role': role,
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+    final snap = await docRef.get();
+    final data = snap.data() ?? {};
+    final createdAt = (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now();
+    return UserProfile(
+      id: docRef.id,
+      nama: name,
+      role: role,
+      createdAt: createdAt,
+    );
+  }
+
+  Future<UserProfile?> getUser(String id) async {
+    final snap = await _db.collection('users').doc(id).get();
+    if (!snap.exists) return null;
+    final data = snap.data() ?? {};
+    return UserProfile(
+      id: snap.id,
+      nama: data['nama'] as String? ?? '-',
+      role: data['role'] as String? ?? 'user',
+      createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+    );
+  }
+}
+
+/// Menyimpan sesi login di SharedPreferences (ID & nama user).
+class UserSessionManager {
+  static const _keyUserId = 'session_user_id';
+  static const _keyUserName = 'session_user_name';
+  static const _keyAccounts = 'accountsV2'; // format: name::id
+
+  Future<void> saveSession(UserProfile user) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_keyUserId, user.id);
+    await prefs.setString(_keyUserName, user.nama);
+  }
+
+  Future<void> saveSessionRaw({required String id, required String name}) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_keyUserId, id);
+    await prefs.setString(_keyUserName, name);
+  }
+
+  Future<Map<String, String>> loadAccounts() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getStringList(_keyAccounts) ?? [];
+    final map = <String, String>{};
+    for (final entry in raw) {
+      final parts = entry.split('::');
+      if (parts.length == 2) {
+        map[parts[0]] = parts[1];
+      }
+    }
+    return map;
+  }
+
+  Future<void> saveAccounts(Map<String, String> accounts) async {
+    final prefs = await SharedPreferences.getInstance();
+    final list = accounts.entries.map((e) => '${e.key}::${e.value}').toList();
+    await prefs.setStringList(_keyAccounts, list);
+  }
+
+  Future<(String?, String?)> loadSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    return (prefs.getString(_keyUserId), prefs.getString(_keyUserName));
+  }
+
+  Future<void> clearSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_keyUserId);
+    await prefs.remove(_keyUserName);
+  }
+}
+
 class AuthController extends ChangeNotifier {
+  final _userService = UserService();
+  final _session = UserSessionManager();
+  Map<String, String> _accountIds = {}; // name -> userId
+  String? _userId;
   String? _userName;
-  List<String> _accounts = [];
   bool _ready = false;
   bool _isAdmin = false;
   String? _adminKecamatan;
 
+  String? get userId => _userId;
   String? get userName => _userName;
-  List<String> get accounts => List.unmodifiable(_accounts);
+  List<String> get accounts => List.unmodifiable(_accountIds.keys);
   bool get isReady => _ready;
-  bool get isLoggedIn => _userName != null;
+  bool get isLoggedIn => _userId != null;
   bool get isAdmin => _isAdmin;
   String? get adminKecamatan => _adminKecamatan;
 
@@ -174,12 +276,14 @@ class AuthController extends ChangeNotifier {
 
   Future<void> _load() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      _accounts = prefs.getStringList('accounts') ?? [];
-      _userName = prefs.getString('lastUser');
+      _accountIds = await _session.loadAccounts();
+      final session = await _session.loadSession();
+      _userId = session.$1;
+      _userName = session.$2;
     } catch (e) {
       // Jika gagal baca prefs, tetap lanjut dengan data kosong agar UI tidak hang.
-      _accounts = [];
+      _accountIds = {};
+      _userId = null;
       _userName = null;
     } finally {
       _ready = true;
@@ -189,21 +293,7 @@ class AuthController extends ChangeNotifier {
 
   Future<void> _persistAccounts() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setStringList('accounts', _accounts);
-    } catch (_) {
-      // Abaikan kegagalan penyimpanan, biarkan berjalan tanpa persistensi.
-    }
-  }
-
-  Future<void> _persistLastUser() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      if (_userName == null) {
-        await prefs.remove('lastUser');
-      } else {
-        await prefs.setString('lastUser', _userName!);
-      }
+      await _session.saveAccounts(_accountIds);
     } catch (_) {
       // Abaikan kegagalan penyimpanan, biarkan berjalan tanpa persistensi.
     }
@@ -212,19 +302,21 @@ class AuthController extends ChangeNotifier {
   Future<void> createAccount(String name) async {
     final clean = name.trim();
     if (clean.isEmpty) return;
-    _userName = clean;
-    if (!_accounts.contains(clean)) {
-      _accounts.add(clean);
-    }
+    final user = await _userService.createUser(name: clean);
+    _userId = user.id;
+    _userName = user.nama;
+    _accountIds[user.nama] = user.id;
     await _persistAccounts();
-    await _persistLastUser();
+    await _session.saveSession(user);
     notifyListeners();
   }
 
   Future<void> loginWithExisting(String name) async {
-    if (!_accounts.contains(name)) return;
+    final id = _accountIds[name];
+    if (id == null) return;
+    _userId = id;
     _userName = name;
-    await _persistLastUser();
+    await _session.saveSessionRaw(id: id, name: name);
     notifyListeners();
   }
 
@@ -237,15 +329,18 @@ class AuthController extends ChangeNotifier {
     _adminKecamatan = kecamatan;
     _isAdmin = true;
     _userName = 'Admin';
+    _userId = 'admin';
+    await _session.saveSessionRaw(id: _userId!, name: _userName!);
     notifyListeners();
     return true;
   }
 
   void logout() {
     _userName = null;
+    _userId = null;
     _isAdmin = false;
     _adminKecamatan = null;
-    _persistLastUser();
+    _session.clearSession();
     notifyListeners();
   }
 }
@@ -281,22 +376,48 @@ class SiagaKotaApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final baseText = GoogleFonts.mulishTextTheme();
+    const seed = Colors.indigo;
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'SiagaKota',
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
+        colorScheme: ColorScheme.fromSeed(seedColor: seed),
         scaffoldBackgroundColor: const Color(0xFFF7F8FB),
-        appBarTheme: const AppBarTheme(
+        textTheme: baseText,
+        appBarTheme: AppBarTheme(
           backgroundColor: Colors.white,
           elevation: 0.6,
           foregroundColor: Colors.black87,
           centerTitle: false,
-          titleTextStyle: TextStyle(
+          titleTextStyle: baseText.titleMedium?.copyWith(
             fontSize: 18,
-            fontWeight: FontWeight.w700,
+            fontWeight: FontWeight.w800,
             color: Colors.black87,
           ),
+        ),
+        chipTheme: ChipThemeData(
+          labelStyle: baseText.labelMedium?.copyWith(fontWeight: FontWeight.w700),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          backgroundColor: const Color(0xFFE8ECF4),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
+        inputDecorationTheme: const InputDecorationTheme(
+          filled: true,
+          fillColor: Colors.white,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.all(Radius.circular(12)),
+            borderSide: BorderSide(color: Color(0xFFCBD5E1)),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.all(Radius.circular(12)),
+            borderSide: BorderSide(color: Color(0xFFCBD5E1)),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.all(Radius.circular(12)),
+            borderSide: BorderSide(color: seed, width: 1.4),
+          ),
+          contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         ),
         cardTheme: CardThemeData(
           elevation: 0,
@@ -356,6 +477,11 @@ class _SplashScreenState extends State<SplashScreen> {
   @override
   void initState() {
     super.initState();
+    // Quick connectivity probe to Firestore.
+    FirebaseFirestore.instance.collection('test').add({
+      'message': 'Firebase Connected 🔥',
+      'time': Timestamp.now(),
+    });
     _checkUpdate();
   }
 
@@ -1256,6 +1382,7 @@ class _LoginPageState extends State<LoginPage> {
   final controller = TextEditingController();
   final adminPassController = TextEditingController();
   String _adminKecamatan = kecamatanPalembang.first;
+  bool _saving = false;
 
   @override
   void dispose() {
@@ -1287,31 +1414,13 @@ class _LoginPageState extends State<LoginPage> {
                       style: Theme.of(context).textTheme.headlineSmall,
                     ),
                     const SizedBox(height: 8),
-                    Text(
-                      hasAccounts
-                          ? 'Pilih akun yang sudah dibuat atau tambahkan akun baru.'
-                          : 'Buat akun terlebih dahulu agar laporan bisa tersimpan.',
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 24),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      alignment: WrapAlignment.center,
-                      children: [
-                        OutlinedButton.icon(
-                          icon: const Icon(Icons.shop_outlined),
-                          label: const Text('Unduh via Play Store'),
-                          onPressed: () => _openUrl(kPlayStoreUrl),
-                        ),
-                        OutlinedButton.icon(
-                          icon: const Icon(Icons.public),
-                          label: const Text('Unduh via Web (Chrome)'),
-                          onPressed: () => _openUrl(kWebDownloadUrl),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
+                      Text(
+                        hasAccounts
+                            ? 'Pilih akun yang sudah dibuat atau tambahkan akun baru.'
+                            : 'Buat akun terlebih dahulu agar laporan bisa tersimpan.',
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 24),
                     OutlinedButton.icon(
                       icon: const Icon(Icons.admin_panel_settings),
                       label: const Text('Masuk sebagai Admin'),
@@ -1367,8 +1476,8 @@ class _LoginPageState extends State<LoginPage> {
                     const SizedBox(height: 10),
                     FilledButton.icon(
                       icon: const Icon(Icons.add),
-                      label: const Text('Simpan & Masuk'),
-                      onPressed: () => _createAccount(auth),
+                      label: Text(_saving ? 'Menyimpan...' : 'Simpan & Masuk'),
+                      onPressed: _saving ? null : () => _createAccount(auth),
                     ),
                   ],
                 ),
@@ -1388,24 +1497,25 @@ class _LoginPageState extends State<LoginPage> {
       );
       return;
     }
-    await auth.createAccount(name);
-    if (!mounted) return;
-    controller.clear();
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const AuthGate()),
-      (route) => false,
-    );
-  }
-
-  Future<void> _openUrl(String url) async {
-    final uri = Uri.parse(url);
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    } else {
+    setState(() => _saving = true);
+    try {
+      await auth.createAccount(name);
+      if (!mounted) return;
+      controller.clear();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Akun tersimpan dan login berhasil')),
+      );
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const AuthGate()),
+        (route) => false,
+      );
+    } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Gagal membuka tautan unduhan')),
+        SnackBar(content: Text('Gagal menyimpan akun: $e')),
       );
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
   }
 
@@ -1511,10 +1621,38 @@ class ReportListView extends StatelessWidget {
             children: [
               if (drafts.isNotEmpty)
                 DraftsBanner(drafts: drafts, controller: controller),
-              const Center(
-                child: Padding(
-                  padding: EdgeInsets.symmetric(vertical: 40),
-                  child: Text('Belum ada laporan'),
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 40),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.inbox_outlined,
+                        size: 72, color: Colors.blueGrey.shade300),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'Belum ada laporan',
+                      style:
+                          TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+                    ),
+                    const SizedBox(height: 6),
+                    const Text(
+                      'Mulai buat laporan untuk wilayahmu.',
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 14),
+                    FilledButton.icon(
+                      icon: const Icon(Icons.add_location_alt_outlined),
+                      label: const Text('Buat laporan'),
+                      onPressed: () async {
+                        await Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const ReportFormPage(),
+                          ),
+                        );
+                      },
+                    ),
+                  ],
                 ),
               ),
             ],
