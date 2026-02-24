@@ -16,23 +16,142 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'update_service.dart';
 
 final NotificationService notificationService = NotificationService();
+final CloudSyncService cloudSync = CloudSyncService();
+const String kPlayStoreUrl =
+    'https://play.google.com/store/apps/details?id=com.example.siagakota';
+const String kWebDownloadUrl = 'https://example.com/siagakota/download';
+const String kChangelogUrl = 'https://example.com/siagakota/changelog';
+const String kDefaultApkUrl = 'https://example.com/siagakota/app-latest.apk';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  notificationService.init();
+  await notificationService.init();
+  await cloudSync.init();
+  final packageInfo = await PackageInfo.fromPlatform();
+  cloudSync.setPackageInfo(packageInfo);
   runApp(
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => AuthController()),
-        ChangeNotifierProvider(create: (_) => ReportController()),
+        ChangeNotifierProvider(
+          create: (_) => ReportController(cloud: cloudSync),
+        ),
       ],
       child: const SiagaKotaApp(),
     ),
   );
+}
+
+class CloudSyncService {
+  final bool enable = true; // set false untuk mematikan cloud sync.
+  FirebaseFirestore? _firestore;
+  bool _ready = false;
+  PackageInfo? _packageInfo;
+
+  bool get isReady => _ready;
+
+  Future<void> init() async {
+    if (!enable) return;
+    try {
+      const opts = FirebaseOptions(
+        apiKey: 'TODO_API_KEY',
+        appId: 'TODO_APP_ID',
+        messagingSenderId: 'TODO_MESSAGING_SENDER_ID',
+        projectId: 'TODO_PROJECT_ID',
+        authDomain: 'TODO_AUTH_DOMAIN',
+        storageBucket: 'TODO_STORAGE_BUCKET',
+      );
+      await Firebase.initializeApp(options: opts);
+      _firestore = FirebaseFirestore.instance;
+      _ready = true;
+    } catch (_) {
+      _ready = false;
+    }
+  }
+
+  void setPackageInfo(PackageInfo info) {
+    _packageInfo = info;
+  }
+
+  Stream<List<Report>> listenReports() {
+    if (!isReady) return const Stream.empty();
+    return _firestore!
+        .collection('reports')
+        .snapshots()
+        .map((snap) => snap.docs.map((d) {
+              final data = d.data();
+              data['id'] = d.id;
+              return Report.fromJson(data);
+            }).toList());
+  }
+
+  Future<void> upsertReport(Report report) async {
+    if (!isReady) return;
+    await _firestore!
+        .collection('reports')
+        .doc(report.id)
+        .set(report.toJson(), SetOptions(merge: true));
+  }
+
+  Future<AppUpdateInfo?> fetchUpdateInfo() async {
+    if (!isReady || _packageInfo == null) return null;
+    try {
+      final doc = await _firestore!.doc('meta/app').get();
+      if (!doc.exists) return null;
+      final latest = doc.data()?['latestVersion'] as String?;
+      final note = doc.data()?['note'] as String?;
+      final apkUrl = doc.data()?['apkUrl'] as String?;
+      final force = doc.data()?['forceUpdate'] as bool? ?? false;
+      if (latest == null) return null;
+      final needsUpdate = _isNewer(latest, _packageInfo!.version);
+      if (!needsUpdate) return null;
+      return AppUpdateInfo(
+        latestVersion: latest,
+        note: note ?? 'Versi $latest tersedia. Silakan perbarui aplikasi.',
+        force: force,
+        apkUrl: apkUrl ?? kDefaultApkUrl,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  bool _isNewer(String latest, String current) {
+    List<int> parse(String v) =>
+        v.split('.').map((e) => int.tryParse(e) ?? 0).toList();
+    final l = parse(latest);
+    final c = parse(current);
+    final len = l.length > c.length ? l.length : c.length;
+    for (var i = 0; i < len; i++) {
+      final li = i < l.length ? l[i] : 0;
+      final ci = i < c.length ? c[i] : 0;
+      if (li > ci) return true;
+      if (li < ci) return false;
+    }
+    return false;
+  }
+}
+
+class AppUpdateInfo {
+  final String latestVersion;
+  final String note;
+  final bool force;
+  final String apkUrl;
+
+  const AppUpdateInfo({
+    required this.latestVersion,
+    required this.note,
+    required this.force,
+    required this.apkUrl,
+  });
 }
 
 class AuthController extends ChangeNotifier {
@@ -219,7 +338,85 @@ class SiagaKotaApp extends StatelessWidget {
         ),
         useMaterial3: true,
       ),
-      home: const AuthGate(),
+      home: const SplashScreen(),
+    );
+  }
+}
+
+class SplashScreen extends StatefulWidget {
+  const SplashScreen({super.key});
+
+  @override
+  State<SplashScreen> createState() => _SplashScreenState();
+}
+
+class _SplashScreenState extends State<SplashScreen> {
+  final _updateService = UpdateService();
+
+  @override
+  void initState() {
+    super.initState();
+    _checkUpdate();
+  }
+
+  Future<void> _checkUpdate() async {
+    final result = await _updateService.checkForUpdate();
+    if (!mounted) return;
+    if (result.isUpdateAvailable) {
+      await _showUpdateDialog(result);
+    }
+    if (!mounted) return;
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (_) => const AuthGate()),
+    );
+  }
+
+  Future<void> _showUpdateDialog(UpdateCheckResult info) async {
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: !info.forceUpdate,
+      builder: (ctx) {
+        return AlertDialog(
+          title: Text(info.forceUpdate ? 'Wajib update' : 'Update tersedia'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Versi terbaru: ${info.latestVersion}'),
+              const SizedBox(height: 8),
+              const Text('Silakan unduh APK terbaru untuk melanjutkan.'),
+            ],
+          ),
+          actions: [
+            if (!info.forceUpdate)
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('Nanti'),
+              ),
+            ElevatedButton(
+              onPressed: () async {
+                final navigator = Navigator.of(ctx);
+                final uri = Uri.parse(info.apkUrl);
+                final can = await canLaunchUrl(uri);
+                if (can) {
+                  await launchUrl(uri, mode: LaunchMode.externalApplication);
+                }
+                if (!info.forceUpdate && navigator.canPop()) {
+                  navigator.pop();
+                }
+              },
+              child: const Text('Update'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return const Scaffold(
+      body: Center(child: CircularProgressIndicator()),
     );
   }
 }
@@ -442,6 +639,7 @@ class ReportDraft {
 }
 
 class ReportController extends ChangeNotifier {
+  final CloudSyncService? cloud;
   final List<Report> _reports = [];
   final _uuid = const Uuid();
   final List<Report> _sortedCache = [];
@@ -449,10 +647,18 @@ class ReportController extends ChangeNotifier {
   final List<ReportDraft> _drafts = [];
   bool _draftLoaded = false;
   bool _reportsLoaded = false;
+  StreamSubscription<List<Report>>? _cloudSub;
 
-  ReportController() {
+  ReportController({this.cloud}) {
     loadDrafts();
     loadReports();
+    _attachCloud();
+  }
+
+  @override
+  void dispose() {
+    _cloudSub?.cancel();
+    super.dispose();
   }
 
   List<Report> get reports => List.unmodifiable(_reports);
@@ -504,6 +710,7 @@ class ReportController extends ChangeNotifier {
     _reports.insert(0, newReport);
     _sortedDirty = true;
     await _persistReports();
+    _syncUp(newReport);
     notifyListeners();
   }
 
@@ -550,6 +757,7 @@ class ReportController extends ChangeNotifier {
     _reports[idx].votes += 1;
     _sortedDirty = true;
     _persistReports();
+    _syncUp(_reports[idx]);
     notifyListeners();
   }
 
@@ -563,6 +771,7 @@ class ReportController extends ChangeNotifier {
       '${_reports[idx].jenis} kini ${status.label}',
     );
     _persistReports();
+    _syncUp(_reports[idx]);
     notifyListeners();
   }
 
@@ -620,6 +829,33 @@ class ReportController extends ChangeNotifier {
     } catch (_) {
       // abaikan jika gagal parse
     }
+  }
+
+  void replaceFromCloud(List<Report> incoming) {
+    _reports
+      ..clear()
+      ..addAll(incoming);
+    _sortedDirty = true;
+    _persistReports();
+    notifyListeners();
+  }
+
+  void _attachCloud() {
+    if (cloud == null || !cloud!.isReady) return;
+    _cloudSub = cloud!.listenReports().listen((data) {
+      if (data.isEmpty && _reports.isNotEmpty) {
+        // Seed cloud with existing local data.
+        for (final r in _reports) {
+          _syncUp(r);
+        }
+        return;
+      }
+      replaceFromCloud(data);
+    });
+  }
+
+  void _syncUp(Report report) {
+    cloud?.upsertReport(report);
   }
 
   List<Hotspot> computeHotspots({
@@ -691,6 +927,7 @@ class _HomeShellState extends State<HomeShell>
     _tabController = TabController(length: 3, vsync: this);
     _tabController.addListener(_handleTabChange);
     _initLocationFlow();
+    _checkUpdate();
   }
 
   @override
@@ -707,6 +944,66 @@ class _HomeShellState extends State<HomeShell>
   Future<void> _initLocationFlow() async {
     final ok = await _ensureLocationPermission();
     if (mounted && ok) await _ambilLokasiAwal();
+  }
+
+  Future<void> _checkUpdate() async {
+    final info = await cloudSync.fetchUpdateInfo();
+    if (!mounted || info == null) return;
+    await _showUpdateDialog(info);
+  }
+
+  Future<void> _showUpdateDialog(AppUpdateInfo info) async {
+    final downloadUri = Uri.parse(info.apkUrl);
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: !info.force,
+      builder: (ctx) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          title: Text(info.force ? 'Wajib update' : 'Tersedia versi baru'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Versi terbaru: ${info.latestVersion}'),
+              const SizedBox(height: 8),
+              Text(info.note),
+              const SizedBox(height: 12),
+              TextButton.icon(
+                onPressed: () async {
+                  final changelog = Uri.parse(kChangelogUrl);
+                  if (await canLaunchUrl(changelog)) {
+                    await launchUrl(changelog, mode: LaunchMode.externalApplication);
+                  }
+                },
+                icon: const Icon(Icons.notes),
+                label: const Text('Lihat catatan rilis'),
+              ),
+            ],
+          ),
+          actions: [
+            if (!info.force)
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('Nanti'),
+              ),
+            ElevatedButton(
+              onPressed: () async {
+                final navigator = Navigator.of(ctx);
+                final canOpen = await canLaunchUrl(downloadUri);
+                if (canOpen) {
+                  await launchUrl(downloadUri, mode: LaunchMode.externalApplication);
+                }
+                if (!info.force && navigator.canPop()) {
+                  navigator.pop();
+                }
+              },
+              child: const Text('Perbarui'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   @override
@@ -997,6 +1294,24 @@ class _LoginPageState extends State<LoginPage> {
                       textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: 24),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      alignment: WrapAlignment.center,
+                      children: [
+                        OutlinedButton.icon(
+                          icon: const Icon(Icons.shop_outlined),
+                          label: const Text('Unduh via Play Store'),
+                          onPressed: () => _openUrl(kPlayStoreUrl),
+                        ),
+                        OutlinedButton.icon(
+                          icon: const Icon(Icons.public),
+                          label: const Text('Unduh via Web (Chrome)'),
+                          onPressed: () => _openUrl(kWebDownloadUrl),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
                     OutlinedButton.icon(
                       icon: const Icon(Icons.admin_panel_settings),
                       label: const Text('Masuk sebagai Admin'),
@@ -1082,6 +1397,18 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 
+  Future<void> _openUrl(String url) async {
+    final uri = Uri.parse(url);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } else {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Gagal membuka tautan unduhan')),
+      );
+    }
+  }
+
   Future<void> _openAdminLogin() async {
     final auth = context.read<AuthController>();
     adminPassController.clear();
@@ -1105,7 +1432,7 @@ class _LoginPageState extends State<LoginPage> {
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
-                  value: _adminKecamatan,
+                  initialValue: _adminKecamatan,
                   decoration: const InputDecoration(
                     labelText: 'Kecamatan yang dikelola',
                     border: OutlineInputBorder(),
@@ -1129,18 +1456,21 @@ class _LoginPageState extends State<LoginPage> {
               ),
               ElevatedButton(
                 onPressed: () async {
+                  final navigator = Navigator.of(ctx);
+                  final messenger = ScaffoldMessenger.of(context);
                   final ok = await auth.loginAsAdmin(
                     password: adminPassController.text,
                     kecamatan: _adminKecamatan,
                   );
-                  if (!mounted) return;
                   if (!ok) {
-                    ScaffoldMessenger.of(context).showSnackBar(
+                    messenger.showSnackBar(
                       const SnackBar(content: Text('Password admin salah')),
                     );
                     return;
                   }
-                  Navigator.pop(ctx, true);
+                  if (mounted) {
+                    navigator.pop(true);
+                  }
                 },
                 child: const Text('Masuk'),
               ),
@@ -1926,7 +2256,7 @@ class MapView extends StatelessWidget {
           (h) => CircleMarker(
             point: LatLng(h.latitude, h.longitude),
             radius: 80,
-            color: Colors.red.withOpacity(0.18),
+            color: Colors.red.withAlpha((0.18 * 255).round()),
             borderColor: Colors.red.shade600,
             borderStrokeWidth: 2,
           ),
@@ -1982,7 +2312,7 @@ class MapView extends StatelessWidget {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                   decoration: BoxDecoration(
-                    color: Colors.red.withOpacity(0.12),
+                    color: Colors.red.withAlpha((0.12 * 255).round()),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Row(
@@ -2092,7 +2422,7 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
         ],
       ),
       body: Consumer<ReportController>(
-        builder: (_, rc, __) {
+        builder: (context, rc, child) {
           final list = [...rc.reports]..sort(
               (a, b) => b.createdAt.compareTo(a.createdAt),
             );
@@ -2316,7 +2646,8 @@ class _StatusButton extends StatelessWidget {
       child: ElevatedButton(
         style: ElevatedButton.styleFrom(
           padding: const EdgeInsets.symmetric(vertical: 10),
-          backgroundColor: active ? color.withOpacity(0.14) : Colors.grey.shade100,
+          backgroundColor:
+              active ? color.withAlpha((0.14 * 255).round()) : Colors.grey.shade100,
           foregroundColor: active ? color.shade700 : Colors.black87,
         ),
         onPressed: active ? null : onTap,
@@ -2441,7 +2772,7 @@ class _ReportFormPageState extends State<ReportFormPage> {
               ),
               const SizedBox(height: 12),
               DropdownButtonFormField<String>(
-                value: _selectedKecamatan,
+                initialValue: _selectedKecamatan,
                 decoration: const InputDecoration(labelText: 'Kecamatan'),
                 items: kecamatanPalembang
                     .map(
