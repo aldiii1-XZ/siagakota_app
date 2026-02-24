@@ -1,7 +1,10 @@
-import 'dart:io';
+import 'dart:io' show File, Platform;
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:geocoding/geocoding.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:uuid/uuid.dart';
@@ -170,6 +173,7 @@ class Report {
   final double longitude;
   final double severity; // 1..5
   final String? fotoPath;
+  final Uint8List? fotoBytes;
   final DateTime createdAt;
   ReportStatus status;
   int votes;
@@ -185,6 +189,7 @@ class Report {
     required this.longitude,
     required this.severity,
     required this.fotoPath,
+    required this.fotoBytes,
     required this.createdAt,
     this.status = ReportStatus.diterima,
     this.votes = 0,
@@ -220,6 +225,7 @@ class ReportController extends ChangeNotifier {
     required double severity,
     required Position position,
     String? fotoPath,
+    Uint8List? fotoBytes,
   }) async {
     final newReport = Report(
       id: _uuid.v4(),
@@ -230,6 +236,7 @@ class ReportController extends ChangeNotifier {
       longitude: position.longitude,
       severity: severity,
       fotoPath: fotoPath,
+      fotoBytes: fotoBytes,
       createdAt: DateTime.now(),
       weatherRisk: _mockWeatherRisk(position.latitude, position.longitude),
     );
@@ -297,11 +304,16 @@ class HomeShell extends StatefulWidget {
 class _HomeShellState extends State<HomeShell>
     with SingleTickerProviderStateMixin {
   late final TabController _tabController;
+  Position? _currentPosition;
+  bool _locLoading = false;
+  String? _locError;
+  String? _locLabel;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    _ambilLokasiAwal();
   }
 
   @override
@@ -311,6 +323,14 @@ class _HomeShellState extends State<HomeShell>
       appBar: AppBar(
         title: Text('SiagaKota • ${auth.userName ?? 'Pengguna'}'),
         actions: [
+          _LocationBadge(
+            position: _currentPosition,
+            loading: _locLoading,
+            error: _locError,
+            label: _locLabel,
+            onRefresh: _ambilLokasiAwal,
+          ),
+          const SizedBox(width: 6),
           IconButton(
             tooltip: 'Keluar',
             onPressed: () {
@@ -333,7 +353,7 @@ class _HomeShellState extends State<HomeShell>
       ),
       body: TabBarView(
         controller: _tabController,
-        children: const [ReportListView(), DashboardView()],
+        children: [const ReportListView(), const DashboardView()],
       ),
       floatingActionButton: _tabController.index == 0
           ? FloatingActionButton.extended(
@@ -348,6 +368,63 @@ class _HomeShellState extends State<HomeShell>
             )
           : null,
     );
+  }
+
+  Future<void> _ambilLokasiAwal() async {
+    setState(() {
+      _locLoading = true;
+      _locError = null;
+      _locLabel = null;
+    });
+    try {
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        setState(() => _locError = 'Layanan lokasi belum aktif');
+        return;
+      }
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.deniedForever ||
+          permission == LocationPermission.denied) {
+        setState(() => _locError = 'Izin lokasi ditolak');
+        return;
+      }
+      final pos = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+      String? label;
+      try {
+        final places = await placemarkFromCoordinates(
+          pos.latitude,
+          pos.longitude,
+        );
+        if (places.isNotEmpty) {
+          final p = places.first;
+          final parts = [
+            if ((p.street ?? '').isNotEmpty) p.street,
+            if ((p.subLocality ?? '').isNotEmpty) p.subLocality,
+            if ((p.locality ?? '').isNotEmpty) p.locality,
+          ];
+          if (parts.isNotEmpty) {
+            label = parts.join(', ');
+          }
+        }
+      } catch (_) {
+        // abaikan kegagalan reverse geocoding
+      }
+      setState(() {
+        _currentPosition = pos;
+        _locLabel = label;
+      });
+    } catch (e) {
+      setState(() => _locError = 'Gagal ambil lokasi: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _locLoading = false);
+      }
+    }
   }
 }
 
@@ -555,25 +632,38 @@ class ReportCard extends StatelessWidget {
                   _InfoChip(icon: Icons.link, label: 'Duplikasi'),
               ],
             ),
-            if (report.fotoPath != null) ...[
+            if (report.fotoBytes != null || report.fotoPath != null) ...[
               const SizedBox(height: 8),
               ClipRRect(
                 borderRadius: BorderRadius.circular(8),
-                child: Image.file(
-                  File(report.fotoPath!),
-                  height: 140,
-                  width: double.infinity,
-                  cacheHeight: 720,
-                  cacheWidth: 1280,
-                  filterQuality: FilterQuality.medium,
-                  fit: BoxFit.cover,
-                  errorBuilder: (context, error, stack) => Container(
-                    height: 140,
-                    color: Colors.grey.shade200,
-                    alignment: Alignment.center,
-                    child: const Text('Foto tidak dapat dimuat'),
-                  ),
-                ),
+                child: report.fotoBytes != null
+                    ? Image.memory(
+                        report.fotoBytes!,
+                        height: 140,
+                        width: double.infinity,
+                        fit: BoxFit.cover,
+                        errorBuilder: (context, error, stack) => Container(
+                          height: 140,
+                          color: Colors.grey.shade200,
+                          alignment: Alignment.center,
+                          child: const Text('Foto tidak dapat dimuat'),
+                        ),
+                      )
+                    : Image.file(
+                        File(report.fotoPath!),
+                        height: 140,
+                        width: double.infinity,
+                        cacheHeight: 720,
+                        cacheWidth: 1280,
+                        filterQuality: FilterQuality.medium,
+                        fit: BoxFit.cover,
+                        errorBuilder: (context, error, stack) => Container(
+                          height: 140,
+                          color: Colors.grey.shade200,
+                          alignment: Alignment.center,
+                          child: const Text('Foto tidak dapat dimuat'),
+                        ),
+                      ),
               ),
             ],
             const SizedBox(height: 8),
@@ -638,6 +728,126 @@ class _InfoChip extends StatelessWidget {
       avatar: Icon(icon, size: 16),
       label: Text(label),
       padding: const EdgeInsets.symmetric(horizontal: 8),
+    );
+  }
+}
+
+class _LocationBanner extends StatelessWidget {
+  const _LocationBanner({
+    required this.position,
+    required this.loading,
+    required this.error,
+    required this.onRefresh,
+  });
+
+  final Position? position;
+  final bool loading;
+  final String? error;
+  final Future<void> Function() onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          children: [
+            CircleAvatar(
+              backgroundColor: Colors.blue.shade50,
+              child: const Icon(Icons.my_location, color: Colors.blue),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Lokasi Anda saat ini',
+                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                  ),
+                  const SizedBox(height: 4),
+                  if (loading)
+                    const Text(
+                      'Mengambil lokasi...',
+                      style: TextStyle(color: Colors.grey),
+                    )
+                  else if (error != null)
+                    Text(error!, style: TextStyle(color: Colors.red.shade700))
+                  else if (position != null)
+                    Text(
+                      '${position!.latitude.toStringAsFixed(4)}, ${position!.longitude.toStringAsFixed(4)}',
+                      style: const TextStyle(color: Colors.black87),
+                    )
+                  else
+                    const Text(
+                      'Lokasi belum tersedia',
+                      style: TextStyle(color: Colors.grey),
+                    ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Dipakai untuk mencari penanganan terdekat.',
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            IconButton(
+              tooltip: 'Segarkan lokasi',
+              onPressed: loading ? null : onRefresh,
+              icon: const Icon(Icons.refresh),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _LocationBadge extends StatelessWidget {
+  const _LocationBadge({
+    required this.position,
+    required this.loading,
+    required this.error,
+    required this.label,
+    required this.onRefresh,
+  });
+
+  final Position? position;
+  final bool loading;
+  final String? error;
+  final String? label;
+  final Future<void> Function() onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = () {
+      if (loading) return 'Memuat...';
+      if (error != null) return 'Lokasi off';
+      if ((label ?? '').isNotEmpty) return label!;
+      if (position != null) {
+        return '${position!.latitude.toStringAsFixed(2)}, ${position!.longitude.toStringAsFixed(2)}';
+      }
+      return 'Lokasi?';
+    }();
+
+    return Padding(
+      padding: const EdgeInsets.only(right: 4),
+      child: OutlinedButton.icon(
+        style: OutlinedButton.styleFrom(
+          visualDensity: VisualDensity.compact,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        ),
+        onPressed: loading ? null : onRefresh,
+        icon: Icon(
+          loading ? Icons.timelapse : Icons.my_location,
+          size: 18,
+          color: loading
+              ? Colors.blueGrey
+              : (error != null ? Colors.red : Colors.blue),
+        ),
+        label: Text(text, style: const TextStyle(fontSize: 12)),
+      ),
     );
   }
 }
@@ -752,6 +962,7 @@ class _ReportFormPageState extends State<ReportFormPage> {
   double severity = 3;
   Position? position;
   String? fotoPath;
+  Uint8List? fotoBytes;
   bool loadingLocation = false;
 
   @override
@@ -912,7 +1123,18 @@ class _ReportFormPageState extends State<ReportFormPage> {
       imageQuality: 65,
     );
     if (file != null) {
-      setState(() => fotoPath = file.path);
+      if (kIsWeb) {
+        final bytes = await file.readAsBytes();
+        setState(() {
+          fotoBytes = bytes;
+          fotoPath = null;
+        });
+      } else {
+        setState(() {
+          fotoPath = file.path;
+          fotoBytes = null;
+        });
+      }
     }
   }
 
@@ -933,6 +1155,7 @@ class _ReportFormPageState extends State<ReportFormPage> {
       severity: severity,
       position: position!,
       fotoPath: fotoPath,
+      fotoBytes: fotoBytes,
     );
     if (!mounted) return;
     Navigator.pop(context);
