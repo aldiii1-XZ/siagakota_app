@@ -956,6 +956,96 @@ class DraftsBanner extends StatelessWidget {
   }
 }
 
+class LocationPickerPage extends StatefulWidget {
+  const LocationPickerPage({super.key, this.initialCenter});
+
+  final LatLng? initialCenter;
+
+  @override
+  State<LocationPickerPage> createState() => _LocationPickerPageState();
+}
+
+class _LocationPickerPageState extends State<LocationPickerPage> {
+  late LatLng _center;
+  LatLng? _selected;
+
+  @override
+  void initState() {
+    super.initState();
+    _center = widget.initialCenter ?? const LatLng(-6.2000, 106.8166);
+    _selected = widget.initialCenter;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Pilih lokasi di peta'),
+        actions: [
+          TextButton(
+            onPressed: _selected == null
+                ? null
+                : () => Navigator.pop<LatLng>(context, _selected),
+            child: const Text(
+              'Pakai',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+          ),
+        ],
+      ),
+      body: FlutterMap(
+        options: MapOptions(
+          initialCenter: _center,
+          initialZoom: 15,
+          minZoom: 3,
+          maxZoom: 18,
+          onTap: (tapPosition, point) {
+            setState(() => _selected = point);
+          },
+        ),
+        children: [
+          TileLayer(
+            urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+            userAgentPackageName: 'com.example.siagakota',
+          ),
+          if (_selected != null)
+            MarkerLayer(
+              markers: [
+                Marker(
+                  point: _selected!,
+                  width: 42,
+                  height: 42,
+                  child: const Icon(
+                    Icons.location_on,
+                    color: Colors.red,
+                    size: 36,
+                  ),
+                ),
+              ],
+            ),
+        ],
+      ),
+      bottomNavigationBar: SafeArea(
+        minimum: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        child: Row(
+          children: [
+            const Icon(Icons.info_outline, size: 18),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                _selected == null
+                    ? 'Ketuk peta untuk memilih titik.'
+                    : 'Dipilih: ${_selected!.latitude.toStringAsFixed(5)}, ${_selected!.longitude.toStringAsFixed(5)}',
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class ReportCard extends StatelessWidget {
   const ReportCard({super.key, required this.report});
 
@@ -1525,8 +1615,10 @@ class MapView extends StatelessWidget {
             ),
             children: [
               TileLayer(
-                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                urlTemplate: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+                subdomains: const ['a', 'b', 'c'],
                 userAgentPackageName: 'com.example.siagakota',
+                maxZoom: 19,
               ),
               MarkerLayer(markers: markers),
             ],
@@ -1598,6 +1690,8 @@ class _StatCard extends StatelessWidget {
   }
 }
 
+enum LocationLabelMode { street, coordinate }
+
 class ReportFormPage extends StatefulWidget {
   const ReportFormPage({super.key, this.draft});
 
@@ -1614,6 +1708,9 @@ class _ReportFormPageState extends State<ReportFormPage> {
   String jenis = 'Banjir';
   double severity = 3;
   Position? position;
+  String? _alamatJalan;
+  bool _alamatLoading = false;
+  LocationLabelMode _locationLabelMode = LocationLabelMode.coordinate;
   String? fotoPath;
   Uint8List? fotoBytes;
   bool loadingLocation = false;
@@ -1704,14 +1801,49 @@ class _ReportFormPageState extends State<ReportFormPage> {
                       ),
                     ),
                   ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: _pilihLokasiDiPeta,
+                      icon: const Icon(Icons.map_outlined),
+                      label: const Text('Pilih di peta'),
+                    ),
+                  ),
                 ],
               ),
               if (position != null)
                 Padding(
-                  padding: const EdgeInsets.only(top: 8),
-                  child: Text(
-                    'Lokasi: ${position!.latitude.toStringAsFixed(4)}, ${position!.longitude.toStringAsFixed(4)}',
-                    style: const TextStyle(color: Colors.green),
+                  padding: const EdgeInsets.only(top: 10),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Tampilan lokasi',
+                        style: TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                      const SizedBox(height: 6),
+                      SegmentedButton<LocationLabelMode>(
+                        segments: const [
+                          ButtonSegment(
+                            value: LocationLabelMode.street,
+                            icon: Icon(Icons.route),
+                            label: Text('Nama jalan'),
+                          ),
+                          ButtonSegment(
+                            value: LocationLabelMode.coordinate,
+                            icon: Icon(Icons.pin_drop),
+                            label: Text('Koordinat'),
+                          ),
+                        ],
+                        selected: {_locationLabelMode},
+                        onSelectionChanged: (values) {
+                          if (values.isEmpty) return;
+                          _onLocationModeChanged(values.first);
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                      _buildLocationPreview(),
+                    ],
                   ),
                 ),
               const SizedBox(height: 12),
@@ -1799,8 +1931,7 @@ class _ReportFormPageState extends State<ReportFormPage> {
     try {
       final pos = await _getPrecisePosition();
       if (pos == null) return;
-      if (!mounted) return;
-      setState(() => position = pos);
+      await _setPosition(pos);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -1811,6 +1942,125 @@ class _ReportFormPageState extends State<ReportFormPage> {
         setState(() => loadingLocation = false);
       }
     }
+  }
+
+  Future<void> _setPosition(Position pos) async {
+    if (!mounted) return;
+    setState(() {
+      position = pos;
+      if (_locationLabelMode == LocationLabelMode.coordinate) {
+        _alamatJalan = null;
+        _alamatLoading = false;
+      }
+    });
+    if (_locationLabelMode == LocationLabelMode.street) {
+      await _fetchAlamat(pos);
+    }
+  }
+
+  Future<void> _fetchAlamat(Position pos) async {
+    setState(() {
+      _alamatLoading = true;
+      _alamatJalan = null;
+    });
+    try {
+      final places = await placemarkFromCoordinates(
+        pos.latitude,
+        pos.longitude,
+      );
+      if (!mounted) return;
+      setState(() {
+        if (places.isNotEmpty) {
+          final p = places.first;
+          final parts = [
+            if ((p.street ?? '').trim().isNotEmpty) p.street!.trim(),
+            if ((p.subLocality ?? '').trim().isNotEmpty) p.subLocality!.trim(),
+            if ((p.locality ?? '').trim().isNotEmpty) p.locality!.trim(),
+          ];
+          _alamatJalan = parts.isEmpty ? null : parts.join(', ');
+        } else {
+          _alamatJalan = null;
+        }
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _alamatJalan = null);
+    } finally {
+      if (mounted) {
+        setState(() => _alamatLoading = false);
+      }
+    }
+  }
+
+  void _onLocationModeChanged(LocationLabelMode mode) {
+    if (_locationLabelMode == mode) return;
+    setState(() => _locationLabelMode = mode);
+    if (mode == LocationLabelMode.street && position != null && _alamatJalan == null) {
+      _fetchAlamat(position!);
+    }
+  }
+
+  Widget _buildLocationPreview() {
+    if (position == null) {
+      return const SizedBox.shrink();
+    }
+    String label;
+    if (_locationLabelMode == LocationLabelMode.street) {
+      if (_alamatLoading) {
+        label = 'Mengambil nama jalan...';
+      } else {
+        label = _alamatJalan ?? 'Nama jalan belum tersedia';
+      }
+    } else {
+      label =
+          '${position!.latitude.toStringAsFixed(4)}, ${position!.longitude.toStringAsFixed(4)}';
+    }
+    return Row(
+      children: [
+        Icon(Icons.place, color: Colors.green.shade700),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            label,
+            style: TextStyle(
+              color: Colors.green.shade700,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _pilihLokasiDiPeta() async {
+    final initial = position != null
+        ? LatLng(position!.latitude, position!.longitude)
+        : null;
+    final selected = await Navigator.push<LatLng>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => LocationPickerPage(initialCenter: initial),
+      ),
+    );
+    if (selected == null) return;
+    await _setPosition(_positionFromLatLng(selected));
+  }
+
+  Position _positionFromLatLng(LatLng point) {
+    return Position(
+      latitude: point.latitude,
+      longitude: point.longitude,
+      timestamp: DateTime.now(),
+      accuracy: 0,
+      altitude: 0,
+      altitudeAccuracy: 0,
+      heading: 0,
+      headingAccuracy: 0,
+      speed: 0,
+      speedAccuracy: 0,
+      floor: null,
+      isMocked: false,
+    );
   }
 
   Future<Position?> _getPrecisePosition() async {
@@ -1880,7 +2130,7 @@ class _ReportFormPageState extends State<ReportFormPage> {
     if (position == null) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('Ambil lokasi GPS dulu')));
+      ).showSnackBar(const SnackBar(content: Text('Pilih lokasi terlebih dahulu')));
       return;
     }
     if ((jenis == 'Infrastruktur Rusak' || jenis == 'Pohon Tumbang') &&
