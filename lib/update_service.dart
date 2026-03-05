@@ -52,17 +52,26 @@ class UpdateService {
   }
 
   bool _isNewer(String latest, String current) {
-    List<int> parse(String v) => v.split('.').map((e) => int.tryParse(e) ?? 0).toList();
-    final l = parse(latest);
-    final c = parse(current);
-    final len = l.length > c.length ? l.length : c.length;
-    for (var i = 0; i < len; i++) {
-      final li = i < l.length ? l[i] : 0;
-      final ci = i < c.length ? c[i] : 0;
-      if (li > ci) return true;
-      if (li < ci) return false;
+    int compareLists(List<int> a, List<int> b) {
+      final maxLen = a.length > b.length ? a.length : b.length;
+      for (var i = 0; i < maxLen; i++) {
+        final ai = i < a.length ? a[i] : 0;
+        final bi = i < b.length ? b[i] : 0;
+        if (ai > bi) return 1;
+        if (ai < bi) return -1;
+      }
+      return 0;
     }
-    return false;
+
+    List<int> parse(String v) {
+      final core = v.split('+').first.split('-').first;
+      return core
+          .split('.')
+          .map((e) => int.tryParse(e) ?? 0)
+          .toList();
+    }
+
+    return compareLists(parse(latest), parse(current)) > 0;
   }
 
   Future<void> _showDialog({

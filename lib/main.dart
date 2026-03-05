@@ -27,7 +27,6 @@ import 'update_service.dart';
 
 final NotificationService notificationService = NotificationService();
 final CloudSyncService cloudSync = CloudSyncService();
-const String kChangelogUrl = 'https://example.com/siagakota/changelog';
 const String kDefaultApkUrl = 'https://example.com/siagakota/app-latest.apk';
 
 Future<void> main() async {
@@ -97,6 +96,11 @@ class CloudSyncService {
         .collection('reports')
         .doc(report.id)
         .set(report.toJson(), SetOptions(merge: true));
+  }
+
+  Future<void> deleteReport(String id) async {
+    if (!isReady) return;
+    await _firestore!.collection('reports').doc(id).delete();
   }
 
   Future<AppUpdateInfo?> fetchUpdateInfo() async {
@@ -855,6 +859,27 @@ class ReportController extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<bool> deleteReport({
+    required String id,
+    required bool isAdmin,
+    required String? requester,
+  }) async {
+    final idx = _reports.indexWhere((r) => r.id == id);
+    if (idx == -1) return false;
+
+    final report = _reports[idx];
+    if (!isAdmin && report.owner != requester) {
+      return false;
+    }
+
+    _reports.removeAt(idx);
+    _sortedDirty = true;
+    await _persistReports();
+    await cloud?.deleteReport(id);
+    notifyListeners();
+    return true;
+  }
+
   Report? _findDuplicate(Report incoming) {
     const radiusMeters = 200.0;
     const timeWindow = Duration(hours: 2);
@@ -995,6 +1020,7 @@ class HomeShell extends StatefulWidget {
 class _HomeShellState extends State<HomeShell>
     with SingleTickerProviderStateMixin {
   late final TabController _tabController;
+  final UpdateService _updateService = UpdateService();
   Position? _currentPosition;
   bool _locLoading = false;
   String? _locError;
@@ -1027,63 +1053,7 @@ class _HomeShellState extends State<HomeShell>
   }
 
   Future<void> _checkUpdate() async {
-    final info = await cloudSync.fetchUpdateInfo();
-    if (!mounted || info == null) return;
-    await _showUpdateDialog(info);
-  }
-
-  Future<void> _showUpdateDialog(AppUpdateInfo info) async {
-    final downloadUri = Uri.parse(info.apkUrl);
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: !info.force,
-      builder: (ctx) {
-        return AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-          title: Text(info.force ? 'Wajib update' : 'Tersedia versi baru'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Versi terbaru: ${info.latestVersion}'),
-              const SizedBox(height: 8),
-              Text(info.note),
-              const SizedBox(height: 12),
-              TextButton.icon(
-                onPressed: () async {
-                  final changelog = Uri.parse(kChangelogUrl);
-                  if (await canLaunchUrl(changelog)) {
-                    await launchUrl(changelog, mode: LaunchMode.externalApplication);
-                  }
-                },
-                icon: const Icon(Icons.notes),
-                label: const Text('Lihat catatan rilis'),
-              ),
-            ],
-          ),
-          actions: [
-            if (!info.force)
-              TextButton(
-                onPressed: () => Navigator.of(ctx).pop(),
-                child: const Text('Nanti'),
-              ),
-            ElevatedButton(
-              onPressed: () async {
-                final navigator = Navigator.of(ctx);
-                final canOpen = await canLaunchUrl(downloadUri);
-                if (canOpen) {
-                  await launchUrl(downloadUri, mode: LaunchMode.externalApplication);
-                }
-                if (!info.force && navigator.canPop()) {
-                  navigator.pop();
-                }
-              },
-              child: const Text('Perbarui'),
-            ),
-          ],
-        );
-      },
-    );
+    await _updateService.checkForUpdate(context);
   }
 
   @override
@@ -1899,6 +1869,12 @@ class ReportCard extends StatelessWidget {
                 ),
                 Text('${report.votes}'),
                 const Spacer(),
+                IconButton(
+                  tooltip: auth.isAdmin ? 'Hapus laporan' : 'Tarik laporan',
+                  onPressed: () => _confirmDelete(context, controller, auth),
+                  icon: const Icon(Icons.delete_outline),
+                  color: Colors.red.shade500,
+                ),
                 if (auth.isAdmin)
                   PopupMenuButton<ReportStatus>(
                     tooltip: 'Ubah status',
@@ -1931,6 +1907,52 @@ class ReportCard extends StatelessWidget {
 
   String _coordLabel(Report r) =>
       '${r.latitude.toStringAsFixed(4)}, ${r.longitude.toStringAsFixed(4)}';
+
+  Future<void> _confirmDelete(
+    BuildContext context,
+    ReportController controller,
+    AuthController auth,
+  ) async {
+    final isAdmin = auth.isAdmin;
+    final title = isAdmin ? 'Hapus laporan?' : 'Tarik laporan?';
+    final message = isAdmin
+        ? 'Laporan akan dihapus permanen.'
+        : 'Laporan akan ditarik dan tidak tampil lagi.';
+    final actionLabel = isAdmin ? 'Hapus' : 'Tarik';
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Batal'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(actionLabel),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+    final ok = await controller.deleteReport(
+      id: report.id,
+      isAdmin: isAdmin,
+      requester: auth.userName,
+    );
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          ok ? 'Laporan berhasil ${isAdmin ? 'dihapus' : 'ditarik'}' : 'Gagal menghapus laporan',
+        ),
+      ),
+    );
+  }
 }
 
 class StatusChip extends StatelessWidget {
@@ -2581,6 +2603,11 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
                   (r) => _AdminCard(
                     report: r,
                     onSetStatus: (status) => rc.updateStatus(r.id, status),
+                    onDelete: () => rc.deleteReport(
+                      id: r.id,
+                      isAdmin: true,
+                      requester: auth.userName,
+                    ),
                   ),
                 ),
             ],
@@ -2621,10 +2648,15 @@ class _AdminStat extends StatelessWidget {
 }
 
 class _AdminCard extends StatelessWidget {
-  const _AdminCard({required this.report, required this.onSetStatus});
+  const _AdminCard({
+    required this.report,
+    required this.onSetStatus,
+    required this.onDelete,
+  });
 
   final Report report;
   final void Function(ReportStatus) onSetStatus;
+  final Future<bool> Function() onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -2709,8 +2741,50 @@ class _AdminCard extends StatelessWidget {
                 ),
               ],
             ),
+            const SizedBox(height: 10),
+            Align(
+              alignment: Alignment.centerRight,
+              child: OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.red.shade600,
+                  side: BorderSide(color: Colors.red.shade200),
+                ),
+                onPressed: () => _confirmDelete(context),
+                icon: const Icon(Icons.delete_outline),
+                label: const Text('Hapus laporan'),
+              ),
+            ),
           ],
         ),
+      ),
+    );
+  }
+
+  Future<void> _confirmDelete(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Hapus laporan?'),
+        content: const Text('Data laporan akan dihapus permanen.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Batal'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Hapus'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+    final ok = await onDelete();
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(ok ? 'Laporan berhasil dihapus' : 'Gagal menghapus laporan'),
       ),
     );
   }
