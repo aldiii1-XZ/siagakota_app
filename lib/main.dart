@@ -19,9 +19,11 @@ import 'package:latlong2/latlong.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';/*  */
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'update_service.dart';
 import 'theme.dart';
+import 'components.dart';
 
 final NotificationService notificationService = NotificationService();
 final CloudSyncService cloudSync = CloudSyncService();
@@ -426,8 +428,10 @@ class _SplashScreenState extends State<SplashScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(
-      body: Center(child: CircularProgressIndicator()),
+    return Scaffold(
+      body: SiagaLoadingWidget(
+        message: 'Memuat SiagaKota...',
+      ),
     );
   }
 }
@@ -1465,38 +1469,22 @@ class ReportListView extends StatelessWidget {
             children: [
               if (drafts.isNotEmpty)
                 DraftsBanner(drafts: drafts, controller: controller),
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 40),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.inbox_outlined,
-                        size: 72, color: Colors.blueGrey.shade300),
-                    const SizedBox(height: 12),
-                    const Text(
-                      'Belum ada laporan',
-                      style:
-                          TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
-                    ),
-                    const SizedBox(height: 6),
-                    const Text(
-                      'Mulai buat laporan untuk wilayahmu.',
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 14),
-                    FilledButton.icon(
-                      icon: const Icon(Icons.add_location_alt_outlined),
-                      label: const Text('Buat laporan'),
-                      onPressed: () async {
-                        await Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => const ReportFormPage(),
-                          ),
-                        );
-                      },
-                    ),
-                  ],
+              EmptyState(
+                icon: Icons.inbox_outlined,
+                title: 'Belum ada laporan',
+                subtitle: 'Mulai buat laporan untuk wilayahmu.',
+                iconColor: AppTheme.primary,
+                action: FilledButton.icon(
+                  icon: const Icon(Icons.add_location_alt_outlined),
+                  label: const Text('Buat laporan'),
+                  onPressed: () async {
+                    await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const ReportFormPage(),
+                      ),
+                    );
+                  },
                 ),
               ),
             ],
@@ -2011,14 +1999,39 @@ class DashboardView extends StatelessWidget {
           children: [
             Text('Ringkasan', style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 10),
-            Wrap(
-              spacing: 12,
-              runSpacing: 12,
+            Row(
               children: [
-                _StatCard(title: 'Total laporan', value: '$total'),
-                _StatCard(title: 'Diterima', value: '$diterima'),
-                _StatCard(title: 'Proses', value: '$proses'),
-                _StatCard(title: 'Selesai', value: '$selesai'),
+                _StatCard(
+                  title: 'Total laporan',
+                  value: '$total',
+                  icon: Icons.assessment_outlined,
+                  color: AppTheme.info,
+                ),
+                const SizedBox(width: 10),
+                _StatCard(
+                  title: 'Diterima',
+                  value: '$diterima',
+                  icon: Icons.hourglass_bottom,
+                  color: AppTheme.warning,
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                _StatCard(
+                  title: 'Proses',
+                  value: '$proses',
+                  icon: Icons.construction,
+                  color: AppTheme.info,
+                ),
+                const SizedBox(width: 10),
+                _StatCard(
+                  title: 'Selesai',
+                  value: '$selesai',
+                  icon: Icons.check_circle_outline,
+                  color: AppTheme.success,
+                ),
               ],
             ),
             const SizedBox(height: 20),
@@ -2744,30 +2757,56 @@ class _StatusButton extends StatelessWidget {
 }
 
 class _StatCard extends StatelessWidget {
-  const _StatCard({required this.title, required this.value});
+  const _StatCard({required this.title, required this.value, this.icon, this.color});
 
   final String title;
   final String value;
+  final IconData? icon;
+  final Color? color;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 150,
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.blue.shade50,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(title, style: const TextStyle(fontSize: 12)),
-          const SizedBox(height: 4),
-          Text(
-            value,
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+    return Expanded(
+      child: Card(
+        child: Container(
+          padding: const EdgeInsets.all(AppTheme.lg),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+            gradient: LinearGradient(
+              colors: [
+                Colors.white,
+                (color ?? AppTheme.primary).withAlpha((0.05 * 255).round()),
+              ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
           ),
-        ],
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (icon != null)
+                Icon(icon, color: color ?? AppTheme.primary, size: 24),
+              if (icon != null) const SizedBox(height: AppTheme.md),
+              Text(
+                value,
+                style: GoogleFonts.inter(
+                  fontSize: 24,
+                  fontWeight: FontWeight.w700,
+                  color: AppTheme.neutral900,
+                ),
+              ),
+              const SizedBox(height: AppTheme.sm),
+              Text(
+                title,
+                style: GoogleFonts.inter(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  color: AppTheme.neutral600,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
