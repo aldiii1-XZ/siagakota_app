@@ -2,6 +2,61 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'theme.dart';
 
+const String kSiagaLogoAsset = 'assets/icons/SiagaKota.png';
+
+class SiagaLogo extends StatelessWidget {
+  final double size;
+  final EdgeInsetsGeometry padding;
+  final bool showShadow;
+  final BoxFit fit;
+
+  const SiagaLogo({
+    super.key,
+    this.size = 64,
+    this.padding = const EdgeInsets.all(8),
+    this.showShadow = true,
+    this.fit = BoxFit.contain,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      padding: padding,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(size * 0.28),
+        border: Border.all(color: AppTheme.neutral200),
+        boxShadow: showShadow
+            ? [
+                BoxShadow(
+                  color: Colors.black.withAlpha((0.12 * 255).round()),
+                  blurRadius: 18,
+                  offset: const Offset(0, 8),
+                ),
+              ]
+            : null,
+      ),
+      child: Image.asset(
+        kSiagaLogoAsset,
+        fit: fit,
+        gaplessPlayback: true,
+        errorBuilder: (context, error, stackTrace) {
+          return FittedBox(
+            fit: BoxFit.contain,
+            child: Icon(
+              Icons.shield_outlined,
+              color: AppTheme.primary,
+              size: size * 0.56,
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
 // ============ LOADING STATES ============
 
 /// Elegant loading indicator
@@ -73,22 +128,9 @@ class _SiagaLoadingWidgetState extends State<SiagaLoadingWidget>
   Widget _buildRotatingLogo() {
     return RotationTransition(
       turns: _controller,
-      child: Container(
-        width: 60,
-        height: 60,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          gradient: LinearGradient(
-            colors: [AppTheme.primary, AppTheme.secondary],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-        ),
-        child: const Icon(
-          Icons.emergency_share_outlined,
-          color: Colors.white,
-          size: 32,
-        ),
+      child: const SiagaLogo(
+        size: 60,
+        padding: EdgeInsets.all(6),
       ),
     );
   }
@@ -193,8 +235,10 @@ class EmptyState extends StatelessWidget {
                   shape: BoxShape.circle,
                   gradient: LinearGradient(
                     colors: [
-                      (iconColor ?? AppTheme.primary).withAlpha((0.1 * 255).round()),
-                      (iconColor ?? AppTheme.primary).withAlpha((0.05 * 255).round()),
+                      (iconColor ?? AppTheme.primary)
+                          .withAlpha((0.1 * 255).round()),
+                      (iconColor ?? AppTheme.primary)
+                          .withAlpha((0.05 * 255).round()),
                     ],
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
@@ -325,13 +369,13 @@ class _FadeInScaleState extends State<FadeInScale>
   void initState() {
     super.initState();
     _controller = AnimationController(duration: widget.duration, vsync: this);
-    
+
     _fadeAnimation = Tween<double>(begin: 0, end: 1)
         .animate(CurvedAnimation(parent: _controller, curve: widget.curve));
-    
+
     _scaleAnimation = Tween<double>(begin: 0.8, end: 1)
         .animate(CurvedAnimation(parent: _controller, curve: widget.curve));
-    
+
     _controller.forward();
   }
 
@@ -415,8 +459,8 @@ class GradientButton extends StatelessWidget {
                     height: 18,
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
-                      valueColor:
-                          AlwaysStoppedAnimation<Color>(Colors.white.withAlpha(200)),
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                          Colors.white.withAlpha(200)),
                     ),
                   ),
                   const SizedBox(width: AppTheme.md),

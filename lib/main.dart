@@ -16,7 +16,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';/*  */
+import 'package:flutter_local_notifications/flutter_local_notifications.dart'; /*  */
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -76,10 +76,8 @@ class CloudSyncService {
 
   Stream<List<Report>> listenReports() {
     if (!isReady) return const Stream.empty();
-    return _supabase
-        .from('reports')
-        .stream(primaryKey: ['id'])
-        .map((snap) => snap.map((d) => Report.fromJson(d)).toList());
+    return _supabase.from('reports').stream(primaryKey: ['id']).map(
+        (snap) => snap.map((d) => Report.fromJson(d)).toList());
   }
 
   Future<void> upsertReport(Report report) async {
@@ -95,12 +93,9 @@ class CloudSyncService {
   Future<AppUpdateInfo?> fetchUpdateInfo() async {
     if (!isReady || _packageInfo == null) return null;
     try {
-      final response = await _supabase
-          .from('meta')
-          .select()
-          .eq('id', 'app')
-          .single();
-      
+      final response =
+          await _supabase.from('meta').select().eq('id', 'app').single();
+
       if (response.isEmpty) return null;
       final latest = response['latestVersion'] as String?;
       final note = response['note'] as String?;
@@ -171,7 +166,8 @@ class UserService {
   UserService({SupabaseClient? supabase})
       : _supabase = supabase ?? Supabase.instance.client;
 
-  Future<UserProfile> createUser({required String name, String role = 'user'}) async {
+  Future<UserProfile> createUser(
+      {required String name, String role = 'user'}) async {
     final response = await _supabase
         .from('users')
         .insert({
@@ -181,7 +177,7 @@ class UserService {
         })
         .select()
         .single();
-    
+
     return UserProfile(
       id: response['id'] as String,
       nama: response['nama'] as String,
@@ -192,17 +188,15 @@ class UserService {
 
   Future<UserProfile?> getUser(String id) async {
     try {
-      final response = await _supabase
-          .from('users')
-          .select()
-          .eq('id', id)
-          .single();
-      
+      final response =
+          await _supabase.from('users').select().eq('id', id).single();
+
       return UserProfile(
         id: response['id'] as String,
         nama: response['nama'] as String? ?? '-',
         role: response['role'] as String? ?? 'user',
-        createdAt: DateTime.parse(response['created_at'] as String? ?? DateTime.now().toIso8601String()),
+        createdAt: DateTime.parse(response['created_at'] as String? ??
+            DateTime.now().toIso8601String()),
       );
     } catch (_) {
       return null;
@@ -222,7 +216,8 @@ class UserSessionManager {
     await prefs.setString(_keyUserName, user.nama);
   }
 
-  Future<void> saveSessionRaw({required String id, required String name}) async {
+  Future<void> saveSessionRaw(
+      {required String id, required String name}) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_keyUserId, id);
     await prefs.setString(_keyUserName, name);
@@ -301,8 +296,7 @@ class AuthController extends ChangeNotifier {
   Future<void> _persistAccounts() async {
     try {
       await _session.saveAccounts(_accountIds);
-    } catch (_) {
-    }
+    } catch (_) {}
   }
 
   Future<void> createAccount(String name) async {
@@ -407,12 +401,10 @@ class _SplashScreenState extends State<SplashScreen> {
     // Quick connectivity probe to Supabase.
     () async {
       try {
-        await Supabase.instance.client
-            .from('test')
-            .insert({
-              'message': 'Supabase Connected ✅',
-              'time': DateTime.now().toIso8601String(),
-            });
+        await Supabase.instance.client.from('test').insert({
+          'message': 'Supabase Connected ✅',
+          'time': DateTime.now().toIso8601String(),
+        });
       } catch (_) {}
     }();
     _checkUpdate();
@@ -597,8 +589,8 @@ class Report {
         accuracyMeters: (json['accuracyMeters'] as num?)?.toDouble(),
         createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
             DateTime.now(),
-        status: ReportStatus.values
-            .firstWhere((e) => e.name == json['status'], orElse: () => ReportStatus.diterima),
+        status: ReportStatus.values.firstWhere((e) => e.name == json['status'],
+            orElse: () => ReportStatus.diterima),
         votes: json['votes'] as int? ?? 0,
         duplicateOf: json['duplicateOf'] as String?,
         weatherRisk: (json['weatherRisk'] as num?)?.toDouble() ?? 0,
@@ -626,24 +618,24 @@ class ReportDraft {
   });
 
   Map<String, dynamic> toJson() => {
-    'nama': nama,
-    'jenis': jenis,
-    'deskripsi': deskripsi,
-    'severity': severity,
-    'kecamatan': kecamatan,
-    'fotoPath': fotoPath,
-    'fotoBase64': fotoBase64,
-  };
+        'nama': nama,
+        'jenis': jenis,
+        'deskripsi': deskripsi,
+        'severity': severity,
+        'kecamatan': kecamatan,
+        'fotoPath': fotoPath,
+        'fotoBase64': fotoBase64,
+      };
 
   factory ReportDraft.fromJson(Map<String, dynamic> json) => ReportDraft(
-    nama: json['nama'] as String,
-    jenis: json['jenis'] as String? ?? 'Banjir',
-    deskripsi: json['deskripsi'] as String? ?? '',
-    severity: (json['severity'] as num?)?.toDouble() ?? 3,
-    kecamatan: json['kecamatan'] as String? ?? kecamatanPalembang.first,
-    fotoPath: json['fotoPath'] as String?,
-    fotoBase64: json['fotoBase64'] as String?,
-  );
+        nama: json['nama'] as String,
+        jenis: json['jenis'] as String? ?? 'Banjir',
+        deskripsi: json['deskripsi'] as String? ?? '',
+        severity: (json['severity'] as num?)?.toDouble() ?? 3,
+        kecamatan: json['kecamatan'] as String? ?? kecamatanPalembang.first,
+        fotoPath: json['fotoPath'] as String?,
+        fotoBase64: json['fotoBase64'] as String?,
+      );
 }
 
 class ReportController extends ChangeNotifier {
@@ -809,8 +801,7 @@ class ReportController extends ChangeNotifier {
     const timeWindow = Duration(hours: 2);
     for (final r in _reports) {
       final sameType = r.jenis == incoming.jenis;
-      final closeBy =
-          Geolocator.distanceBetween(
+      final closeBy = Geolocator.distanceBetween(
             r.latitude,
             r.longitude,
             incoming.latitude,
@@ -988,7 +979,9 @@ class _HomeShellState extends State<HomeShell>
         ? reportsProvider.reports
             .where((r) => r.kecamatan == auth.adminKecamatan)
             .toList()
-        : reportsProvider.reports.where((r) => r.owner == auth.userName).toList();
+        : reportsProvider.reports
+            .where((r) => r.owner == auth.userName)
+            .toList();
     final hotspots = auth.isAdmin
         ? reportsProvider.computeHotspots(minCount: 3)
         : reportsProvider.computeHotspots(
@@ -997,6 +990,14 @@ class _HomeShellState extends State<HomeShell>
           );
     return Scaffold(
       appBar: AppBar(
+        leading: const Padding(
+          padding: EdgeInsets.only(left: 12, top: 8, bottom: 8),
+          child: SiagaLogo(
+            size: 36,
+            padding: EdgeInsets.all(4),
+            showShadow: false,
+          ),
+        ),
         title: Text('SiagaKota • ${auth.userName ?? 'Pengguna'}'),
         actions: [
           _LocationBadge(
@@ -1018,7 +1019,8 @@ class _HomeShellState extends State<HomeShell>
               },
               icon: const Icon(Icons.admin_panel_settings),
               label: Text(auth.adminKecamatan ?? 'Panel'),
-              style: TextButton.styleFrom(foregroundColor: Colors.blueGrey.shade800),
+              style: TextButton.styleFrom(
+                  foregroundColor: Colors.blueGrey.shade800),
             ),
           if (auth.isAdmin) const SizedBox(width: 6),
           IconButton(
@@ -1131,8 +1133,7 @@ class _HomeShellState extends State<HomeShell>
     }
 
     if (!mounted) return false;
-    final granted =
-        await showDialog<bool>(
+    final granted = await showDialog<bool>(
           context: context,
           barrierDismissible: false,
           builder: (ctx) => AlertDialog(
@@ -1254,21 +1255,26 @@ class _LoginPageState extends State<LoginPage> {
                   mainAxisAlignment: MainAxisAlignment.center,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Icon(Icons.lock_person, size: 64, color: Colors.blue),
-                    const SizedBox(height: 12),
+                    const Center(
+                      child: SiagaLogo(
+                        size: 88,
+                        padding: EdgeInsets.all(10),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
                     Text(
                       'Masuk ke SiagaKota',
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.headlineSmall,
                     ),
                     const SizedBox(height: 8),
-                      Text(
-                        hasAccounts
-                            ? 'Pilih akun yang sudah dibuat atau tambahkan akun baru.'
-                            : 'Buat akun terlebih dahulu agar laporan bisa tersimpan.',
-                        textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(height: 24),
+                    Text(
+                      hasAccounts
+                          ? 'Pilih akun yang sudah dibuat atau tambahkan akun baru.'
+                          : 'Buat akun terlebih dahulu agar laporan bisa tersimpan.',
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 24),
                     OutlinedButton.icon(
                       icon: const Icon(Icons.admin_panel_settings),
                       label: const Text('Masuk sebagai Admin'),
@@ -1403,7 +1409,8 @@ class _LoginPageState extends State<LoginPage> {
                         ),
                       )
                       .toList(),
-                  onChanged: (val) => _adminKecamatan = val ?? kecamatanPalembang.first,
+                  onChanged: (val) =>
+                      _adminKecamatan = val ?? kecamatanPalembang.first,
                 ),
               ],
             ),
@@ -1786,7 +1793,8 @@ class ReportCard extends StatelessWidget {
                 if (auth.isAdmin)
                   PopupMenuButton<ReportStatus>(
                     tooltip: 'Ubah status',
-                    onSelected: (val) => controller.updateStatus(report.id, val),
+                    onSelected: (val) =>
+                        controller.updateStatus(report.id, val),
                     itemBuilder: (_) => ReportStatus.values
                         .map(
                           (s) => PopupMenuItem(
@@ -1856,7 +1864,9 @@ class ReportCard extends StatelessWidget {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          ok ? 'Laporan berhasil ${isAdmin ? 'dihapus' : 'ditarik'}' : 'Gagal menghapus laporan',
+          ok
+              ? 'Laporan berhasil ${isAdmin ? 'dihapus' : 'ditarik'}'
+              : 'Gagal menghapus laporan',
         ),
       ),
     );
@@ -1975,7 +1985,9 @@ class DashboardView extends StatelessWidget {
             ? controller.reports
                 .where((r) => r.kecamatan == auth.adminKecamatan)
                 .toList()
-            : controller.reports.where((r) => r.owner == auth.userName).toList();
+            : controller.reports
+                .where((r) => r.owner == auth.userName)
+                .toList();
         final total = visible.length;
         final selesai =
             visible.where((r) => r.status == ReportStatus.selesai).length;
@@ -2052,16 +2064,17 @@ class DashboardView extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               ...hotspots.take(5).map(
-                (h) => ListTile(
-                  leading: const Icon(Icons.warning_amber, color: Colors.red),
-                  title: Text(
-                    '${h.latitude.toStringAsFixed(4)}, ${h.longitude.toStringAsFixed(4)}',
+                    (h) => ListTile(
+                      leading:
+                          const Icon(Icons.warning_amber, color: Colors.red),
+                      title: Text(
+                        '${h.latitude.toStringAsFixed(4)}, ${h.longitude.toStringAsFixed(4)}',
+                      ),
+                      subtitle: Text(
+                        '${h.count} laporan • keparahan rata-rata ${h.averageSeverity.toStringAsFixed(1)}',
+                      ),
+                    ),
                   ),
-                  subtitle: Text(
-                    '${h.count} laporan • keparahan rata-rata ${h.averageSeverity.toStringAsFixed(1)}',
-                  ),
-                ),
-              ),
               const SizedBox(height: 20),
             ],
             ElevatedButton.icon(
@@ -2334,8 +2347,8 @@ class MapView extends StatelessWidget {
     final center = currentPosition != null
         ? LatLng(currentPosition!.latitude, currentPosition!.longitude)
         : (reports.isNotEmpty
-              ? LatLng(reports.first.latitude, reports.first.longitude)
-              : const LatLng(-6.2000, 106.8166));
+            ? LatLng(reports.first.latitude, reports.first.longitude)
+            : const LatLng(-6.2000, 106.8166));
 
     return Column(
       children: [
@@ -2357,14 +2370,16 @@ class MapView extends StatelessWidget {
               const Spacer(),
               if (hotspots.isNotEmpty)
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                   decoration: BoxDecoration(
                     color: Colors.red.withAlpha((0.12 * 255).round()),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Row(
                     children: [
-                      const Icon(Icons.warning_amber, color: Colors.red, size: 18),
+                      const Icon(Icons.warning_amber,
+                          color: Colors.red, size: 18),
                       const SizedBox(width: 6),
                       Text(
                         '${hotspots.length} titik rawan',
@@ -2389,7 +2404,8 @@ class MapView extends StatelessWidget {
             ),
             children: [
               TileLayer(
-                urlTemplate: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+                urlTemplate:
+                    'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
                 subdomains: const ['a', 'b', 'c'],
                 userAgentPackageName: 'com.example.siagakota',
                 maxZoom: 19,
@@ -2464,7 +2480,8 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
           IconButton(
             tooltip: 'Reset filter',
             icon: const Icon(Icons.filter_alt_off),
-            onPressed: _filter == null ? null : () => setState(() => _filter = null),
+            onPressed:
+                _filter == null ? null : () => setState(() => _filter = null),
           ),
         ],
       ),
@@ -2482,9 +2499,12 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
           final filteredList = filtered.toList();
 
           final total = rc.reports.length;
-          final selesai = rc.reports.where((r) => r.status == ReportStatus.selesai).length;
-          final proses = rc.reports.where((r) => r.status == ReportStatus.proses).length;
-          final diterima = rc.reports.where((r) => r.status == ReportStatus.diterima).length;
+          final selesai =
+              rc.reports.where((r) => r.status == ReportStatus.selesai).length;
+          final proses =
+              rc.reports.where((r) => r.status == ReportStatus.proses).length;
+          final diterima =
+              rc.reports.where((r) => r.status == ReportStatus.diterima).length;
 
           return ListView(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
@@ -2503,7 +2523,8 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
               const SizedBox(height: 12),
               Row(
                 children: [
-                  const Text('Filter status:', style: TextStyle(fontWeight: FontWeight.w600)),
+                  const Text('Filter status:',
+                      style: TextStyle(fontWeight: FontWeight.w600)),
                   const SizedBox(width: 10),
                   DropdownButton<ReportStatus?>(
                     value: _filter,
@@ -2529,7 +2550,8 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
               if (filteredList.isEmpty)
                 const Padding(
                   padding: EdgeInsets.symmetric(vertical: 24),
-                  child: Center(child: Text('Belum ada laporan untuk ditinjau')),
+                  child:
+                      Center(child: Text('Belum ada laporan untuk ditinjau')),
                 )
               else
                 ...filteredList.map(
@@ -2605,7 +2627,8 @@ class _AdminCard extends StatelessWidget {
               children: [
                 Text(
                   report.jenis,
-                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                  style: const TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.w700),
                 ),
                 const Spacer(),
                 StatusChip(status: report.status),
@@ -2717,7 +2740,8 @@ class _AdminCard extends StatelessWidget {
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(ok ? 'Laporan berhasil dihapus' : 'Gagal menghapus laporan'),
+        content:
+            Text(ok ? 'Laporan berhasil dihapus' : 'Gagal menghapus laporan'),
       ),
     );
   }
@@ -2745,8 +2769,9 @@ class _StatusButton extends StatelessWidget {
       child: ElevatedButton(
         style: ElevatedButton.styleFrom(
           padding: const EdgeInsets.symmetric(vertical: 10),
-          backgroundColor:
-              active ? color.withAlpha((0.14 * 255).round()) : Colors.grey.shade100,
+          backgroundColor: active
+              ? color.withAlpha((0.14 * 255).round())
+              : Colors.grey.shade100,
           foregroundColor: active ? color.shade700 : Colors.black87,
         ),
         onPressed: active ? null : onTap,
@@ -2757,7 +2782,8 @@ class _StatusButton extends StatelessWidget {
 }
 
 class _StatCard extends StatelessWidget {
-  const _StatCard({required this.title, required this.value, this.icon, this.color});
+  const _StatCard(
+      {required this.title, required this.value, this.icon, this.color});
 
   final String title;
   final String value;
@@ -2907,8 +2933,8 @@ class _ReportFormPageState extends State<ReportFormPage> {
                       ),
                     )
                     .toList(),
-                onChanged: (val) =>
-                    setState(() => _selectedKecamatan = val ?? kecamatanPalembang.first),
+                onChanged: (val) => setState(
+                    () => _selectedKecamatan = val ?? kecamatanPalembang.first),
               ),
               const SizedBox(height: 12),
               TextFormField(
@@ -3134,7 +3160,9 @@ class _ReportFormPageState extends State<ReportFormPage> {
   void _onLocationModeChanged(LocationLabelMode mode) {
     if (_locationLabelMode == mode) return;
     setState(() => _locationLabelMode = mode);
-    if (mode == LocationLabelMode.street && position != null && _alamatJalan == null) {
+    if (mode == LocationLabelMode.street &&
+        position != null &&
+        _alamatJalan == null) {
       _fetchAlamat(position!);
     }
   }
@@ -3269,7 +3297,8 @@ class _ReportFormPageState extends State<ReportFormPage> {
     if (position == null) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('Pilih lokasi terlebih dahulu')));
+      ).showSnackBar(
+          const SnackBar(content: Text('Pilih lokasi terlebih dahulu')));
       return;
     }
     if ((jenis == 'Infrastruktur Rusak' || jenis == 'Pohon Tumbang') &&
