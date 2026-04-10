@@ -17,14 +17,11 @@ import 'package:printing/printing.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';/*  */
-import 'package:firebase_core/firebase_core.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'firebase_options.dart';
 import 'update_service.dart';
+import 'theme.dart';
 
 final NotificationService notificationService = NotificationService();
 final CloudSyncService cloudSync = CloudSyncService();
@@ -383,89 +380,10 @@ class SiagaKotaApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final baseText = GoogleFonts.mulishTextTheme();
-    const seed = Colors.indigo;
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'SiagaKota',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: seed),
-        scaffoldBackgroundColor: const Color(0xFFF7F8FB),
-        textTheme: baseText,
-        appBarTheme: AppBarTheme(
-          backgroundColor: Colors.white,
-          elevation: 0.6,
-          foregroundColor: Colors.black87,
-          centerTitle: false,
-          titleTextStyle: baseText.titleMedium?.copyWith(
-            fontSize: 18,
-            fontWeight: FontWeight.w800,
-            color: Colors.black87,
-          ),
-        ),
-        chipTheme: ChipThemeData(
-          labelStyle: baseText.labelMedium?.copyWith(fontWeight: FontWeight.w700),
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          backgroundColor: const Color(0xFFE8ECF4),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        ),
-        inputDecorationTheme: const InputDecorationTheme(
-          filled: true,
-          fillColor: Colors.white,
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.all(Radius.circular(12)),
-            borderSide: BorderSide(color: Color(0xFFCBD5E1)),
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.all(Radius.circular(12)),
-            borderSide: BorderSide(color: Color(0xFFCBD5E1)),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.all(Radius.circular(12)),
-            borderSide: BorderSide(color: seed, width: 1.4),
-          ),
-          contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        ),
-        cardTheme: CardThemeData(
-          elevation: 0,
-          color: Colors.white,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-          ),
-          margin: EdgeInsets.zero,
-        ),
-        elevatedButtonTheme: ElevatedButtonThemeData(
-          style: ElevatedButton.styleFrom(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-            textStyle: const TextStyle(fontWeight: FontWeight.w700),
-          ),
-        ),
-        outlinedButtonTheme: OutlinedButtonThemeData(
-          style: OutlinedButton.styleFrom(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-            side: const BorderSide(color: Color(0xFFCBD5E1)),
-            textStyle: const TextStyle(fontWeight: FontWeight.w600),
-          ),
-        ),
-        floatingActionButtonTheme: const FloatingActionButtonThemeData(
-          backgroundColor: Colors.indigo,
-          foregroundColor: Colors.white,
-          extendedPadding: EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-        ),
-        snackBarTheme: const SnackBarThemeData(
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.all(Radius.circular(12)),
-          ),
-        ),
-        useMaterial3: true,
-      ),
+      theme: AppTheme.getTheme(),
       home: const SplashScreen(),
     );
   }
@@ -575,20 +493,13 @@ extension ReportStatusText on ReportStatus {
   Color get color {
     switch (this) {
       case ReportStatus.diterima:
-        return Colors.orange.shade600;
+        return AppTheme.warning;
       case ReportStatus.proses:
-        return Colors.blue.shade600;
+        return AppTheme.info;
       case ReportStatus.selesai:
-        return Colors.green.shade600;
+        return AppTheme.success;
     }
   }
-}
-
-Color severityColor(double severity) {
-  if (severity >= 4) return Colors.red.shade600;
-  if (severity >= 3) return Colors.deepOrange.shade400;
-  if (severity >= 2) return Colors.amber.shade600;
-  return Colors.green.shade600;
 }
 
 class Hotspot {
