@@ -1,4 +1,4 @@
 {
-  "buildCommand": null,
+  "buildCommand": "flutter build web --release",
   "outputDirectory": "build/web"
 }
