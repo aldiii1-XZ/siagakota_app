@@ -22,6 +22,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'firebase_options.dart';
 import 'update_service.dart';
 
@@ -31,8 +32,9 @@ const String kDefaultApkUrl = 'https://example.com/siagakota/app-latest.apk';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
+  await Supabase.initialize(
+    url: 'https://zlrochssnbctknwngade.supabase.co',
+    anonKey: 'sb_publishable_GKXuik7hl19yglck_IlSUg_pt0Zbvl8',
   );
   await notificationService.init();
   await cloudSync.init();
@@ -53,7 +55,7 @@ Future<void> main() async {
 
 class CloudSyncService {
   final bool enable = true; // set false untuk mematikan cloud sync.
-  FirebaseFirestore? _firestore;
+  late SupabaseClient _supabase;
   bool _ready = false;
   PackageInfo? _packageInfo;
 
@@ -62,12 +64,7 @@ class CloudSyncService {
   Future<void> init() async {
     if (!enable) return;
     try {
-      if (Firebase.apps.isEmpty) {
-        await Firebase.initializeApp(
-          options: DefaultFirebaseOptions.currentPlatform,
-        );
-      }
-      _firestore = FirebaseFirestore.instance;
+      _supabase = Supabase.instance.client;
       _ready = true;
     } catch (_) {
       _ready = false;
@@ -80,38 +77,36 @@ class CloudSyncService {
 
   Stream<List<Report>> listenReports() {
     if (!isReady) return const Stream.empty();
-    return _firestore!
-        .collection('reports')
-        .snapshots()
-        .map((snap) => snap.docs.map((d) {
-              final data = d.data();
-              data['id'] = d.id;
-              return Report.fromJson(data);
-            }).toList());
+    return _supabase
+        .from('reports')
+        .stream(primaryKey: ['id'])
+        .map((snap) => snap.map((d) => Report.fromJson(d)).toList());
   }
 
   Future<void> upsertReport(Report report) async {
     if (!isReady) return;
-    await _firestore!
-        .collection('reports')
-        .doc(report.id)
-        .set(report.toJson(), SetOptions(merge: true));
+    await _supabase.from('reports').upsert(report.toJson());
   }
 
   Future<void> deleteReport(String id) async {
     if (!isReady) return;
-    await _firestore!.collection('reports').doc(id).delete();
+    await _supabase.from('reports').delete().eq('id', id);
   }
 
   Future<AppUpdateInfo?> fetchUpdateInfo() async {
     if (!isReady || _packageInfo == null) return null;
     try {
-      final doc = await _firestore!.doc('meta/app').get();
-      if (!doc.exists) return null;
-      final latest = doc.data()?['latestVersion'] as String?;
-      final note = doc.data()?['note'] as String?;
-      final apkUrl = doc.data()?['apkUrl'] as String?;
-      final force = doc.data()?['forceUpdate'] as bool? ?? false;
+      final response = await _supabase
+          .from('meta')
+          .select()
+          .eq('id', 'app')
+          .single();
+      
+      if (response.isEmpty) return null;
+      final latest = response['latestVersion'] as String?;
+      final note = response['note'] as String?;
+      final apkUrl = response['apkUrl'] as String?;
+      final force = response['forceUpdate'] as bool? ?? false;
       if (latest == null) return null;
       final needsUpdate = _isNewer(latest, _packageInfo!.version);
       if (!needsUpdate) return null;
@@ -171,39 +166,48 @@ class UserProfile {
   });
 }
 
-/// Layanan khusus untuk operasi Firestore terkait user.
+/// Layanan khusus untuk operasi Supabase terkait user.
 class UserService {
-  final FirebaseFirestore _db;
-  UserService({FirebaseFirestore? firestore})
-      : _db = firestore ?? FirebaseFirestore.instance;
+  final SupabaseClient _supabase;
+  UserService({SupabaseClient? supabase})
+      : _supabase = supabase ?? Supabase.instance.client;
 
   Future<UserProfile> createUser({required String name, String role = 'user'}) async {
-    final docRef = await _db.collection('users').add({
-      'nama': name,
-      'role': role,
-      'createdAt': FieldValue.serverTimestamp(),
-    });
-    final snap = await docRef.get();
-    final data = snap.data() ?? {};
-    final createdAt = (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now();
+    final response = await _supabase
+        .from('users')
+        .insert({
+          'nama': name,
+          'role': role,
+          'created_at': DateTime.now().toIso8601String(),
+        })
+        .select()
+        .single();
+    
     return UserProfile(
-      id: docRef.id,
-      nama: name,
-      role: role,
-      createdAt: createdAt,
+      id: response['id'] as String,
+      nama: response['nama'] as String,
+      role: response['role'] as String,
+      createdAt: DateTime.parse(response['created_at'] as String),
     );
   }
 
   Future<UserProfile?> getUser(String id) async {
-    final snap = await _db.collection('users').doc(id).get();
-    if (!snap.exists) return null;
-    final data = snap.data() ?? {};
-    return UserProfile(
-      id: snap.id,
-      nama: data['nama'] as String? ?? '-',
-      role: data['role'] as String? ?? 'user',
-      createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
-    );
+    try {
+      final response = await _supabase
+          .from('users')
+          .select()
+          .eq('id', id)
+          .single();
+      
+      return UserProfile(
+        id: response['id'] as String,
+        nama: response['nama'] as String? ?? '-',
+        role: response['role'] as String? ?? 'user',
+        createdAt: DateTime.parse(response['created_at'] as String? ?? DateTime.now().toIso8601String()),
+      );
+    } catch (_) {
+      return null;
+    }
   }
 }
 
@@ -299,7 +303,6 @@ class AuthController extends ChangeNotifier {
     try {
       await _session.saveAccounts(_accountIds);
     } catch (_) {
-      // Abaikan kegagalan penyimpanan, biarkan berjalan tanpa persistensi.
     }
   }
 
@@ -481,11 +484,17 @@ class _SplashScreenState extends State<SplashScreen> {
   @override
   void initState() {
     super.initState();
-    // Quick connectivity probe to Firestore.
-    FirebaseFirestore.instance.collection('test').add({
-      'message': 'Firebase Connected 🔥',
-      'time': Timestamp.now(),
-    });
+    // Quick connectivity probe to Supabase.
+    () async {
+      try {
+        await Supabase.instance.client
+            .from('test')
+            .insert({
+              'message': 'Supabase Connected ✅',
+              'time': DateTime.now().toIso8601String(),
+            });
+      } catch (_) {}
+    }();
     _checkUpdate();
   }
 
