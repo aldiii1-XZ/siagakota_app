@@ -30,6 +30,7 @@ dependencies:
   package_info_plus: ^8.0.2
   google_fonts: ^6.1.0
   supabase_flutter: ^2.12.2
+  http: ^1.2.1
 
 dev_dependencies:
   flutter_test:
