@@ -9,7 +9,7 @@
       "client_info": {
         "mobilesdk_app_id": "1:901234658011:android:36fb960615463bba41dafe",
         "android_client_info": {
-          "package_name": "com.example.siagakota_app"
+          "package_name": "id.siagakota.siagakota"
         }
       },
       "oauth_client": [],

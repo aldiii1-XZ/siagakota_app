@@ -1,51 +1,39 @@
-# TODO Setup Laravel + MySQL + Tailwind CSS Backend
+# SiagaKota Mobile App Setup TODO
 
-## Phase 1: Laravel Project Setup
-- [x] Create backend/ directory
-- [x] Initialize Laravel project via Composer
-- [x] Configure .env for SQLite (dev) / MySQL (prod)
-- [x] Install Laravel Sanctum
-- [x] Setup Tailwind CSS with CDN
+## Approved Plan Steps (Flutter Mobile App Production Setup)
 
-## Phase 2: Database Layer
-- [x] Migration: create_users_table (extend default)
-- [x] Migration: create_reports_table
-- [x] Migration: create_app_meta_table
-- [x] Eloquent Models: User, Report, AppMeta with relations
+### 1. ✅ Information Gathering Complete
+- Analyzed pubspec.yaml, main.dart, android/ios configs.
+- App is already functional mobile app.
 
-## Phase 3: REST API for Flutter
-- [x] AuthController: register, login, profile
-- [x] ReportController: CRUD, upvote, filter
-- [x] AdminController: stats, status update
-- [x] MetaController: app update info
-- [x] API Routes in routes/api.php
-- [x] File storage config for photos
-- [x] Sanctum middleware setup
+### 2. 🔄 Generate Launcher Icons
+- Run: `flutter pub run flutter_launcher_icons`
+- Uses assets/icons/SiagaKota.png
 
-## Phase 4: Web Admin Panel (Tailwind CSS)
-- [x] Blade layout with Tailwind
-- [x] Admin login page
-- [x] Dashboard with stats cards
-- [x] Reports list table with filters
-- [x] Report detail & status update
-- [x] User management page
-- [x] Responsive navbar layout
+### 3. 📱 Update Android Config
+- Edit android/app/build.gradle.kts: app ID to `id.siagakota.app`
+- Add permissions to AndroidManifest.xml (location, camera, storage, notifications)
+- Setup release signing
 
-## Phase 5: Flutter Integration
-- [x] Create lib/services/api_service.dart
-- [x] Update CloudSyncService in main.dart
-- [x] Handle multipart photo upload
-- [x] Update pubspec.yaml if needed
+### 4. 🍎 Update iOS Config
+- Update bundle ID in Xcode project
+- Add usage descriptions to Info.plist
 
-## Phase 6: Seeding & Testing
-- [x] Database seeders for demo data
-- [x] Test API endpoints
-- [x] Instructions for running
+### 5. 🎨 Add Splash Screen
+- Add flutter_native_splash to pubspec.yaml
+- Configure and run generator
 
-## Phase 7: Bug Fixes
-- [x] Register api.php routes in bootstrap/app.php (Laravel 13)
-- [x] Move /api/meta to public routes (no auth required)
-- [x] Add HasApiTokens trait to User model
+### 6. 🔢 Update Version
+- pubspec.yaml: version: 1.0.0+1
 
-## ALL TASKS COMPLETED
+### 7. 🧪 Test Builds
+- `flutter build apk --release`
+- `flutter build ios --release`
+- Test on device
+
+### 8. 📤 Distribution
+- Upload APK to Firebase/Supabase
+- Update Supabase meta.apkUrl
+
+**Next: Confirm plan & proceed to step 2? Or revisions?**
 
