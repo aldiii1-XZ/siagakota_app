@@ -14,6 +14,7 @@ class Report {
   final double longitude;
   final double severity;
   final String district;
+  final double? accuracyMeters;
   final String? photoPath;
   final Uint8List? photoBytes;
   final DateTime createdAt;
@@ -30,6 +31,7 @@ class Report {
     required this.longitude,
     required this.severity,
     required this.district,
+    this.accuracyMeters,
     this.photoPath,
     this.photoBytes,
     required this.createdAt,
@@ -47,6 +49,7 @@ class Report {
     'longitude': longitude,
     'severity': severity,
     'district': district,
+    'accuracyMeters': accuracyMeters,
     'photoPath': photoPath,
     'photoBytes': photoBytes != null ? base64Encode(photoBytes!) : null,
     'createdAt': createdAt.toIso8601String(),
@@ -57,24 +60,34 @@ class Report {
 
   factory Report.fromJson(Map<String, dynamic> json) => Report(
     id: json['id'] as String,
-    title: json['title'] as String? ?? '',
-    description: json['description'] as String? ?? '',
-    type: json['type'] as String? ?? 'Flood',
+    title: json['title'] as String? ?? json['nama'] as String? ?? '',
+    description:
+        json['description'] as String? ?? json['deskripsi'] as String? ?? '',
+    type: json['type'] as String? ?? json['jenis'] as String? ?? 'Flood',
     latitude: (json['latitude'] as num).toDouble(),
     longitude: (json['longitude'] as num).toDouble(),
     severity: (json['severity'] as num).toDouble(),
-    district: json['district'] as String? ?? 'Ilir Barat I',
-    photoPath: json['photoPath'] as String?,
-    photoBytes: json['photoBytes'] != null 
-        ? base64Decode(json['photoBytes'] as String) 
+    district:
+        json['district'] as String? ??
+        json['kecamatan'] as String? ??
+        'Ilir Barat I',
+    accuracyMeters: (json['accuracyMeters'] as num?)?.toDouble() ??
+        (json['accuracy_meters'] as num?)?.toDouble(),
+    photoPath: json['photoPath'] as String? ?? json['fotoPath'] as String?,
+    photoBytes: (json['photoBytes'] ?? json['fotoBytes']) != null
+        ? base64Decode((json['photoBytes'] ?? json['fotoBytes']) as String)
         : null,
-    createdAt: DateTime.parse(json['createdAt'] as String),
+    createdAt: DateTime.parse(
+      json['createdAt'] as String? ??
+          json['created_at'] as String? ??
+          DateTime.now().toIso8601String(),
+    ),
     status: ReportStatus.values.firstWhere(
       (e) => e.name == (json['status'] as String?),
       orElse: () => ReportStatus.pending,
     ),
     votes: json['votes'] as int? ?? 0,
-    reporter: json['reporter'] as String? ?? '',
+    reporter: json['reporter'] as String? ?? json['owner'] as String? ?? '',
   );
 
   String get statusLabel {
@@ -96,6 +109,11 @@ class Report {
   bool get isActive => status != ReportStatus.resolved;
 
   int get supportCount => votes;
+  String get nama => title;
+  String get jenis => type;
+  String get deskripsi => description;
+  String get kecamatan => district;
+  String get owner => reporter;
 
   double priorityScore(DateTime now) {
     final Duration age = now.difference(createdAt);
@@ -141,6 +159,7 @@ class Report {
     double? longitude,
     double? severity,
     String? district,
+    double? accuracyMeters,
     String? photoPath,
     Uint8List? photoBytes,
     DateTime? createdAt,
@@ -156,6 +175,7 @@ class Report {
     longitude: longitude ?? this.longitude,
     severity: severity ?? this.severity,
     district: district ?? this.district,
+    accuracyMeters: accuracyMeters ?? this.accuracyMeters,
     photoPath: photoPath ?? this.photoPath,
     photoBytes: photoBytes ?? this.photoBytes,
     createdAt: createdAt ?? this.createdAt,

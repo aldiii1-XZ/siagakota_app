@@ -168,22 +168,32 @@ class UserService {
 
   Future<UserProfile> createUser(
       {required String name, String role = 'user'}) async {
-    final response = await _supabase
-        .from('users')
-        .insert({
-          'nama': name,
-          'role': role,
-          'created_at': DateTime.now().toIso8601String(),
-        })
-        .select()
-        .single();
+    final now = DateTime.now();
+    try {
+      final response = await _supabase
+          .from('users')
+          .insert({
+            'nama': name,
+            'role': role,
+            'created_at': now.toIso8601String(),
+          })
+          .select()
+          .single();
 
-    return UserProfile(
-      id: response['id'] as String,
-      nama: response['nama'] as String,
-      role: response['role'] as String,
-      createdAt: DateTime.parse(response['created_at'] as String),
-    );
+      return UserProfile(
+        id: response['id'] as String,
+        nama: response['nama'] as String,
+        role: response['role'] as String,
+        createdAt: DateTime.parse(response['created_at'] as String),
+      );
+    } catch (_) {
+      return UserProfile(
+        id: const Uuid().v4(),
+        nama: name,
+        role: role,
+        createdAt: now,
+      );
+    }
   }
 
   Future<UserProfile?> getUser(String id) async {

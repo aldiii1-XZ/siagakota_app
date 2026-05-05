@@ -33,8 +33,8 @@ class ApiSyncService {
   }
 
   Future<void> createReport(Report report) async {
-    final fotoBase64 = report.fotoBytes != null 
-        ? base64Encode(report.fotoBytes!) 
+    final fotoBase64 = report.photoBytes != null
+        ? base64Encode(report.photoBytes!)
         : null;
 
     final result = await ApiService.createReport(

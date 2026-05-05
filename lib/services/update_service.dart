@@ -11,7 +11,7 @@ class UpdateService {
   Future<void> checkForUpdate(BuildContext context) async {
     try {
       final package = await PackageInfo.fromPlatform();
-      final currentVersion = package.version;
+      sync.setPackageInfo(package);
 
       final updateInfo = await sync.fetchUpdateInfo();
       if (updateInfo == null) {
