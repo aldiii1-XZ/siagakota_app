@@ -56,13 +56,36 @@ class ApiService {
     return [];
   }
 
-  static Future<Map<String, dynamic>> createReport(Map<String, dynamic> data) async {
-    final res = await http.post(
-      Uri.parse('$baseUrl/reports'),
-      headers: _headers,
-      body: jsonEncode(data),
-    );
-    return jsonDecode(res.body);
+  static Future<Map<String, dynamic>> createReport({
+    required String nama,
+    required String jenis,
+    required String deskripsi,
+    required double latitude,
+    required double longitude,
+    required double severity,
+    required String kecamatan,
+    required String owner,
+    double? accuracyMeters,
+    String? fotoBase64,
+  }) async {
+    var request = http.MultipartRequest('POST', Uri.parse('$baseUrl/reports'));
+    request.headers.addAll(_headers);
+    request.fields.addAll({
+      'nama': nama,
+      'jenis': jenis,
+      'deskripsi': deskripsi,
+      'latitude': latitude.toString(),
+      'longitude': longitude.toString(),
+      'severity': severity.toString(),
+      'kecamatan': kecamatan,
+      'owner': owner,
+      if (accuracyMeters != null) 'accuracy_meters': accuracyMeters.toString(),
+      if (fotoBase64 != null) 'foto_base64': fotoBase64,
+    });
+
+    final streamedResponse = await request.send();
+    final response = await http.Response.fromStream(streamedResponse);
+    return jsonDecode(response.body);
   }
 
   static Future<Map<String, dynamic>> updateReportStatus(String id, String status) async {

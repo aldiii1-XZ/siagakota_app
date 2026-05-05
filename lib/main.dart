@@ -1,4 +1,4 @@
-import 'dart:io' show File, Platform;
+﻿import 'dart:io' show File, Platform;
 import 'dart:convert';
 import 'dart:async';
 import 'package:flutter/material.dart';

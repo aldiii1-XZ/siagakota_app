@@ -29,7 +29,7 @@ dependencies:
   cloud_firestore: ^4.17.5
   package_info_plus: ^8.0.2
   google_fonts: ^6.1.0
-  supabase_flutter: ^2.12.2
+
   http: ^1.2.1
 
 dev_dependencies:
