@@ -1,4 +1,4 @@
-﻿import 'dart:io' show File, Platform;
+import 'dart:io' show File, Platform;
 import 'dart:convert';
 import 'dart:async';
 import 'package:flutter/material.dart';
@@ -19,7 +19,6 @@ import 'package:latlong2/latlong.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart'; /*  */
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'update_service.dart';
 import 'theme.dart';
@@ -950,7 +949,7 @@ class _HomeShellState extends State<HomeShell>
   bool _locLoading = false;
   String? _locError;
   String? _locLabel;
-  bool _permAsked = false;
+  Future<bool>? _permissionRequestFuture;
 
   @override
   void initState() {
@@ -1048,8 +1047,8 @@ class _HomeShellState extends State<HomeShell>
         bottom: TabBar(
           controller: _tabController,
           tabs: const [
+            Tab(text: 'Beranda'),
             Tab(text: 'Laporan'),
-            Tab(text: 'Dashboard'),
             Tab(text: 'Peta'),
           ],
         ),
@@ -1057,8 +1056,8 @@ class _HomeShellState extends State<HomeShell>
       body: TabBarView(
         controller: _tabController,
         children: [
-          const ReportListView(),
           const DashboardView(),
+          const ReportListView(),
           MapView(
             reports: visibleReports,
             hotspots: hotspots,
@@ -1127,59 +1126,41 @@ class _HomeShellState extends State<HomeShell>
   }
 
   Future<bool> _ensureLocationPermission() async {
-    if (_permAsked) return true;
-    _permAsked = true;
-
-    Future<bool> request() async {
-      final res = await Geolocator.requestPermission();
-      return res == LocationPermission.always ||
-          res == LocationPermission.whileInUse;
-    }
-
-    var status = await Geolocator.checkPermission();
+    final status = await Geolocator.checkPermission();
     if (status == LocationPermission.always ||
         status == LocationPermission.whileInUse) {
       return true;
     }
 
-    if (!mounted) return false;
-    final granted = await showDialog<bool>(
-          context: context,
-          barrierDismissible: false,
-          builder: (ctx) => AlertDialog(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
-            ),
-            title: const Text('Izinkan lokasi'),
-            content: const Text(
-              'Kami memerlukan akses lokasi untuk menunjukkan laporan terdekat dan mengisi koordinat Anda secara otomatis.',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () {
-                  Navigator.pop(ctx, false);
-                },
-                child: const Text('Tolak'),
-              ),
-              ElevatedButton(
-                onPressed: () async {
-                  final res = await request();
-                  if (!context.mounted) return;
-                  Navigator.pop(ctx, res);
-                },
-                child: const Text('Izinkan'),
-              ),
-            ],
-          ),
-        ) ??
-        false;
-
-    if (!granted) {
-      _locError = 'Izin lokasi ditolak';
+    if (status == LocationPermission.deniedForever) {
+      _locError =
+          'Izin lokasi ditolak permanen. Aktifkan dari pengaturan aplikasi.';
       _showLocError();
       return false;
     }
-    return true;
+
+    if (_permissionRequestFuture != null) {
+      return _permissionRequestFuture!;
+    }
+
+    _permissionRequestFuture = () async {
+      final res = await Geolocator.requestPermission();
+      final granted = res == LocationPermission.always ||
+          res == LocationPermission.whileInUse;
+      if (!granted) {
+        _locError = res == LocationPermission.deniedForever
+            ? 'Izin lokasi ditolak permanen. Aktifkan dari pengaturan aplikasi.'
+            : 'Izin lokasi ditolak';
+        _showLocError();
+      }
+      return granted;
+    }();
+
+    try {
+      return await _permissionRequestFuture!;
+    } finally {
+      _permissionRequestFuture = null;
+    }
   }
 
   Future<Position?> _getPrecisePosition() async {
@@ -1244,10 +1225,21 @@ class _LoginPageState extends State<LoginPage> {
   bool _saving = false;
 
   @override
+  void initState() {
+    super.initState();
+    controller.addListener(_handleNameChanged);
+  }
+
+  @override
   void dispose() {
+    controller.removeListener(_handleNameChanged);
     controller.dispose();
     adminPassController.dispose();
     super.dispose();
+  }
+
+  void _handleNameChanged() {
+    if (mounted) setState(() {});
   }
 
   @override
@@ -1255,96 +1247,163 @@ class _LoginPageState extends State<LoginPage> {
     return Consumer<AuthController>(
       builder: (context, auth, _) {
         final hasAccounts = auth.accounts.isNotEmpty;
+        final theme = Theme.of(context);
+        final canCreate = !_saving && controller.text.trim().isNotEmpty;
         return Scaffold(
-          body: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 380),
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    const Center(
-                      child: SiagaLogo(
-                        size: 88,
-                        padding: EdgeInsets.all(10),
+          body: Container(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  Color(0xFFFDFEFF),
+                  Color(0xFFF4F8FF),
+                ],
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+              ),
+            ),
+            child: SafeArea(
+              child: Stack(
+                children: [
+                  Positioned(
+                    top: -120,
+                    left: -80,
+                    child: _backgroundOrb(
+                      size: 260,
+                      color: AppTheme.primary.withAlpha(18),
+                    ),
+                  ),
+                  Positioned(
+                    top: 180,
+                    right: -110,
+                    child: _backgroundOrb(
+                      size: 240,
+                      color: AppTheme.secondary.withAlpha(14),
+                    ),
+                  ),
+                  Center(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 24,
+                        vertical: 28,
                       ),
-                    ),
-                    const SizedBox(height: 24),
-                    Text(
-                      'Masuk ke SiagaKota',
-                      textAlign: TextAlign.center,
-                      style: Theme.of(context).textTheme.headlineSmall,
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      hasAccounts
-                          ? 'Pilih akun yang sudah dibuat atau tambahkan akun baru.'
-                          : 'Buat akun terlebih dahulu agar laporan bisa tersimpan.',
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 24),
-                    OutlinedButton.icon(
-                      icon: const Icon(Icons.admin_panel_settings),
-                      label: const Text('Masuk sebagai Admin'),
-                      onPressed: _openAdminLogin,
-                    ),
-                    const SizedBox(height: 16),
-                    if (hasAccounts) ...[
-                      Text(
-                        'Pilih akun',
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: auth.accounts
-                            .map(
-                              (name) => ElevatedButton.icon(
-                                icon: const Icon(Icons.person),
-                                label: Text(name),
-                                onPressed: () async {
-                                  await auth.loginWithExisting(name);
-                                  if (!context.mounted) return;
-                                  Navigator.of(context).pushAndRemoveUntil(
-                                    MaterialPageRoute(
-                                      builder: (_) => const AuthGate(),
-                                    ),
-                                    (route) => false,
-                                  );
-                                },
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 560),
+                        child: FadeInScale(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              const Center(
+                                child: SiagaLogo(
+                                  size: 92,
+                                  padding: EdgeInsets.all(10),
+                                ),
                               ),
-                            )
-                            .toList(),
+                              const SizedBox(height: 18),
+                              Text(
+                                'SiagaKota',
+                                textAlign: TextAlign.center,
+                                style: theme.textTheme.headlineMedium?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                  color: const Color(0xFF1C3F70),
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                hasAccounts
+                                    ? 'Portal layanan pengaduan masyarakat. Pilih akun yang sudah dibuat atau tambahkan akun baru.'
+                                    : 'Portal layanan pengaduan masyarakat. Buat akun terlebih dahulu agar laporan bisa tersimpan.',
+                                textAlign: TextAlign.center,
+                                style: theme.textTheme.bodyMedium?.copyWith(
+                                  color: const Color(0xFF6F86A8),
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              const SizedBox(height: 28),
+                              _buildAdminEntryCard(),
+                              const SizedBox(height: 24),
+                              if (hasAccounts) ...[
+                                _buildSectionTitle('Pilih akun'),
+                                const SizedBox(height: 14),
+                                ...auth.accounts.map(
+                                  (name) => Padding(
+                                    padding: const EdgeInsets.only(bottom: 14),
+                                    child: _buildAccountCard(
+                                      name: name,
+                                      onTap: () async {
+                                        await auth.loginWithExisting(name);
+                                        if (!context.mounted) return;
+                                        Navigator.of(context)
+                                            .pushAndRemoveUntil(
+                                          MaterialPageRoute(
+                                            builder: (_) => const AuthGate(),
+                                          ),
+                                          (route) => false,
+                                        );
+                                      },
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 18),
+                              ],
+                              _buildSectionTitle('Buat akun baru'),
+                              const SizedBox(height: 14),
+                              _buildNameField(),
+                              const SizedBox(height: 14),
+                              SizedBox(
+                                height: 68,
+                                child: FilledButton.icon(
+                                  icon: _saving
+                                      ? const SizedBox(
+                                          width: 18,
+                                          height: 18,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: Colors.white,
+                                          ),
+                                        )
+                                      : const Icon(
+                                          Icons.person_add_alt_1_rounded),
+                                  label: Text(
+                                    _saving ? 'Menyimpan...' : 'Simpan & Masuk',
+                                  ),
+                                  style: FilledButton.styleFrom(
+                                    backgroundColor: canCreate
+                                        ? AppTheme.primary.withAlpha(210)
+                                        : const Color(0xFFD9E3F1),
+                                    foregroundColor: canCreate
+                                        ? Colors.white
+                                        : const Color(0xFF8FA4C3),
+                                    disabledBackgroundColor:
+                                        const Color(0xFFD9E3F1),
+                                    disabledForegroundColor:
+                                        const Color(0xFF8FA4C3),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(20),
+                                    ),
+                                    elevation: 0,
+                                  ),
+                                  onPressed: canCreate
+                                      ? () => _createAccount(auth)
+                                      : null,
+                                ),
+                              ),
+                              const SizedBox(height: 44),
+                              Text(
+                                '© 2026 SIAGAKOTA PALEMBANG',
+                                textAlign: TextAlign.center,
+                                style: theme.textTheme.labelMedium?.copyWith(
+                                  color: const Color(0xFF8CA2C4),
+                                  letterSpacing: 2.8,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       ),
-                      const SizedBox(height: 20),
-                      const Divider(),
-                      const SizedBox(height: 16),
-                    ],
-                    Text(
-                      'Buat akun baru',
-                      style: Theme.of(context).textTheme.titleMedium,
                     ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: controller,
-                      textInputAction: TextInputAction.done,
-                      decoration: const InputDecoration(
-                        labelText: 'Nama akun',
-                        border: OutlineInputBorder(),
-                      ),
-                      onSubmitted: (_) => _createAccount(auth),
-                    ),
-                    const SizedBox(height: 10),
-                    FilledButton.icon(
-                      icon: const Icon(Icons.add),
-                      label: Text(_saving ? 'Menyimpan...' : 'Simpan & Masuk'),
-                      onPressed: _saving ? null : () => _createAccount(auth),
-                    ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -1460,6 +1519,210 @@ class _LoginPageState extends State<LoginPage> {
         (route) => false,
       );
     }
+  }
+
+  Widget _buildAdminEntryCard() {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(22),
+        onTap: _openAdminLogin,
+        child: Ink(
+          padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 20),
+          decoration: BoxDecoration(
+            color: Colors.white.withAlpha(245),
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(color: const Color(0xFFD7E1F0)),
+            boxShadow: [
+              BoxShadow(
+                color: AppTheme.primary.withAlpha(18),
+                blurRadius: 22,
+                offset: const Offset(0, 10),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEFF5FF),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Icon(
+                  Icons.verified_user_outlined,
+                  color: Color(0xFF2F6BFF),
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Text(
+                  'Masuk sebagai Petugas',
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        color: const Color(0xFF23446F),
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAccountCard({
+    required String name,
+    required Future<void> Function() onTap,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(22),
+        onTap: () {
+          onTap();
+        },
+        child: Ink(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(color: const Color(0xFF8FBEFF)),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF2F6BFF).withAlpha(24),
+                blurRadius: 24,
+                offset: const Offset(0, 10),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 52,
+                height: 52,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF1F6FE),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: const Icon(
+                  Icons.account_circle_outlined,
+                  color: Color(0xFF2F6BFF),
+                  size: 32,
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      name,
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.w800,
+                            color: const Color(0xFF1F3B64),
+                          ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'AKUN TERDAFTAR',
+                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                            color: const Color(0xFF8AA3C8),
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.4,
+                          ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: Color(0xFFC4D0E1),
+                size: 30,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNameField() {
+    return TextField(
+      controller: controller,
+      textInputAction: TextInputAction.done,
+      decoration: InputDecoration(
+        hintText: 'Nama akun',
+        filled: true,
+        fillColor: Colors.white,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 20,
+          vertical: 20,
+        ),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(20),
+          borderSide: const BorderSide(color: Color(0xFFD6E0ED)),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(20),
+          borderSide: const BorderSide(color: Color(0xFFD6E0ED)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(20),
+          borderSide: const BorderSide(color: Color(0xFF84B6FF), width: 1.8),
+        ),
+      ),
+      onSubmitted: (_) {
+        if (!_saving && controller.text.trim().isNotEmpty) {
+          _createAccount(context.read<AuthController>());
+        }
+      },
+    );
+  }
+
+  Widget _buildSectionTitle(String title) {
+    return Row(
+      children: [
+        Text(
+          title.toUpperCase(),
+          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                color: const Color(0xFF8FA6C7),
+                fontWeight: FontWeight.w800,
+                letterSpacing: 1.2,
+              ),
+        ),
+        const SizedBox(width: 16),
+        const Expanded(
+          child: Divider(
+            color: Color(0xFFD9E3EF),
+            thickness: 1.4,
+            height: 1,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _backgroundOrb({
+    required double size,
+    required Color color,
+  }) {
+    return IgnorePointer(
+      child: Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          gradient: RadialGradient(
+            colors: [
+              color,
+              color.withAlpha(0),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -2016,57 +2279,93 @@ class DashboardView extends StatelessWidget {
                 minCount: 3,
               );
 
+        final recentReports = [...visible]
+          ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
         return ListView(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
           children: [
-            Text('Ringkasan', style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 10),
-            Row(
+            _DashboardHero(
+              isAdmin: auth.isAdmin,
+              userName: auth.userName,
+            ),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 12,
+              runSpacing: 12,
               children: [
-                _StatCard(
-                  title: 'Total laporan',
+                _MetricCard(
+                  title: 'Total Laporan',
                   value: '$total',
-                  icon: Icons.assessment_outlined,
-                  color: AppTheme.info,
+                  icon: Icons.assignment_outlined,
+                  iconColor: const Color(0xFF2563EB),
+                  background: const Color(0xFFEFF6FF),
                 ),
-                const SizedBox(width: 10),
-                _StatCard(
+                _MetricCard(
                   title: 'Diterima',
                   value: '$diterima',
-                  icon: Icons.hourglass_bottom,
-                  color: AppTheme.warning,
+                  icon: Icons.notifications_none_rounded,
+                  iconColor: const Color(0xFFD97706),
+                  background: const Color(0xFFFFF7ED),
                 ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                _StatCard(
-                  title: 'Proses',
+                _MetricCard(
+                  title: 'Diproses',
                   value: '$proses',
-                  icon: Icons.construction,
-                  color: AppTheme.info,
+                  icon: Icons.schedule_rounded,
+                  iconColor: const Color(0xFF7C3AED),
+                  background: const Color(0xFFF5F3FF),
                 ),
-                const SizedBox(width: 10),
-                _StatCard(
+                _MetricCard(
                   title: 'Selesai',
                   value: '$selesai',
-                  icon: Icons.check_circle_outline,
-                  color: AppTheme.success,
+                  icon: Icons.check_circle_outline_rounded,
+                  iconColor: const Color(0xFF059669),
+                  background: const Color(0xFFECFDF5),
                 ),
               ],
             ),
             const SizedBox(height: 20),
-            Text('Per jenis', style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 8),
-            ...perJenis.entries.map(
-              (e) => ListTile(
-                leading: const Icon(Icons.label_outline),
-                title: Text(e.key),
-                trailing: Text('${e.value}'),
-              ),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final isWide = constraints.maxWidth >= 980;
+                final leftPanel = _DashboardReportsPanel(
+                  auth: auth,
+                  reports: recentReports,
+                );
+                final rightPanel = Column(
+                  children: [
+                    _DashboardSummaryPanel(
+                      perJenis: perJenis,
+                      hotspots: hotspots,
+                    ),
+                    const SizedBox(height: 16),
+                    _DashboardActionsPanel(
+                      isAdmin: auth.isAdmin,
+                      onExport: () => _showExportSheet(context),
+                    ),
+                  ],
+                );
+
+                if (!isWide) {
+                  return Column(
+                    children: [
+                      leftPanel,
+                      const SizedBox(height: 16),
+                      rightPanel,
+                    ],
+                  );
+                }
+
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(flex: 2, child: leftPanel),
+                    const SizedBox(width: 20),
+                    Expanded(child: rightPanel),
+                  ],
+                );
+              },
             ),
-            const SizedBox(height: 20),
             if (hotspots.isNotEmpty) ...[
               Text(
                 'Wilayah rawan (≥3 laporan dalam radius ~1km)',
@@ -2087,11 +2386,6 @@ class DashboardView extends StatelessWidget {
                   ),
               const SizedBox(height: 20),
             ],
-            ElevatedButton.icon(
-              onPressed: () => _showExportSheet(context),
-              icon: const Icon(Icons.download),
-              label: const Text('Export / Print'),
-            ),
           ],
         );
       },
@@ -2301,6 +2595,521 @@ class DashboardView extends StatelessWidget {
   void _toast(BuildContext context, String msg) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(msg), duration: const Duration(seconds: 2)),
+    );
+  }
+}
+
+class _DashboardHero extends StatelessWidget {
+  const _DashboardHero({
+    required this.isAdmin,
+    required this.userName,
+  });
+
+  final bool isAdmin;
+  final String? userName;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x0F0F172A),
+            blurRadius: 24,
+            offset: Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 52,
+            height: 52,
+            decoration: BoxDecoration(
+              color: const Color(0xFFEFF6FF),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: const Icon(
+              Icons.shield_outlined,
+              color: Color(0xFF2563EB),
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  isAdmin ? 'Dashboard Petugas' : 'Beranda Warga',
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w800,
+                        color: const Color(0xFF0F172A),
+                      ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  isAdmin
+                      ? 'Ringkasan laporan masyarakat yang membutuhkan penanganan.'
+                      : 'Pantau laporan Anda dan buat pengaduan baru dengan cepat.',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: const Color(0xFF64748B),
+                      ),
+                ),
+              ],
+            ),
+          ),
+          if (!isAdmin && (userName ?? '').isNotEmpty)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+              ),
+              child: Text(
+                userName!,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF334155),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MetricCard extends StatelessWidget {
+  const _MetricCard({
+    required this.title,
+    required this.value,
+    required this.icon,
+    required this.iconColor,
+    required this.background,
+  });
+
+  final String title;
+  final String value;
+  final IconData icon;
+  final Color iconColor;
+  final Color background;
+
+  @override
+  Widget build(BuildContext context) {
+    final width = MediaQuery.of(context).size.width;
+    final cardWidth = width < 720 ? (width - 44) / 2 : 220.0;
+    return SizedBox(
+      width: cardWidth,
+      child: Container(
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: const Color(0xFFE2E8F0)),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x080F172A),
+              blurRadius: 18,
+              offset: Offset(0, 8),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: background,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Icon(icon, size: 20, color: iconColor),
+            ),
+            const SizedBox(height: 18),
+            Text(
+              value,
+              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                    color: const Color(0xFF0F172A),
+                  ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              title,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: const Color(0xFF64748B),
+                    fontWeight: FontWeight.w600,
+                  ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DashboardReportsPanel extends StatelessWidget {
+  const _DashboardReportsPanel({
+    required this.auth,
+    required this.reports,
+  });
+
+  final AuthController auth;
+  final List<Report> reports;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.list_alt_rounded, color: Color(0xFF64748B)),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  auth.isAdmin
+                      ? 'Antrean Laporan Masyarakat'
+                      : 'Daftar Laporan Anda',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w800,
+                        color: const Color(0xFF1E293B),
+                      ),
+                ),
+              ),
+              const Icon(Icons.tune_rounded, color: Color(0xFF94A3B8)),
+            ],
+          ),
+          const SizedBox(height: 16),
+          if (reports.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 24),
+              child: Center(child: Text('Belum ada laporan')),
+            )
+          else
+            ...reports.take(3).map((report) => Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: _DashboardReportTile(
+                    report: report,
+                    isAdmin: auth.isAdmin,
+                  ),
+                )),
+        ],
+      ),
+    );
+  }
+}
+
+class _DashboardReportTile extends StatelessWidget {
+  const _DashboardReportTile({
+    required this.report,
+    required this.isAdmin,
+  });
+
+  final Report report;
+  final bool isAdmin;
+
+  @override
+  Widget build(BuildContext context) {
+    final formatter = DateFormat('dd MMM • HH:mm');
+    final urgencyColor = severityColor(report.severity);
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(
+                  report.jenis == 'Pohon Tumbang'
+                      ? Icons.warning_amber_rounded
+                      : Icons.place_outlined,
+                  color: const Color(0xFF64748B),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      report.deskripsi,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
+                            color: const Color(0xFF0F172A),
+                          ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${report.id.substring(0, 8)} • ${report.jenis}',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: const Color(0xFF64748B),
+                          ),
+                    ),
+                  ],
+                ),
+              ),
+              if (report.severity >= 4)
+                Container(
+                  width: 10,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    color: urgencyColor,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: Row(
+                  children: [
+                    const Icon(Icons.place_outlined,
+                        size: 16, color: Color(0xFF94A3B8)),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        report.kecamatan,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Color(0xFF64748B),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              Row(
+                children: [
+                  const Icon(Icons.access_time_rounded,
+                      size: 16, color: Color(0xFF94A3B8)),
+                  const SizedBox(width: 6),
+                  Text(
+                    formatter.format(report.createdAt),
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Color(0xFF64748B),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              StatusChip(status: report.status),
+              const Spacer(),
+              Text(
+                isAdmin ? 'Proses Laporan' : 'Lihat Detail',
+                style: const TextStyle(
+                  color: Color(0xFF2563EB),
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(width: 4),
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: Color(0xFF2563EB),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DashboardSummaryPanel extends StatelessWidget {
+  const _DashboardSummaryPanel({
+    required this.perJenis,
+    required this.hotspots,
+  });
+
+  final Map<String, int> perJenis;
+  final List<Hotspot> hotspots;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Ringkasan Kategori',
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
+          ),
+          const SizedBox(height: 14),
+          ...perJenis.entries.map(
+            (entry) => Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Row(
+                children: [
+                  const Icon(Icons.label_outline_rounded,
+                      size: 16, color: Color(0xFF94A3B8)),
+                  const SizedBox(width: 8),
+                  Expanded(child: Text(entry.key)),
+                  Text(
+                    '${entry.value}',
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (hotspots.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            const Divider(color: Color(0xFFE2E8F0)),
+            const SizedBox(height: 10),
+            Text(
+              'Titik Rawan',
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+            ),
+            const SizedBox(height: 10),
+            ...hotspots.take(3).map(
+                  (h) => Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(Icons.warning_amber_rounded,
+                            size: 18, color: Colors.red),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            '${h.count} laporan • rata-rata ${h.averageSeverity.toStringAsFixed(1)}',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Color(0xFF64748B),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _DashboardActionsPanel extends StatelessWidget {
+  const _DashboardActionsPanel({
+    required this.isAdmin,
+    required this.onExport,
+  });
+
+  final bool isAdmin;
+  final VoidCallback onExport;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: isAdmin ? const Color(0xFFEFF6FF) : Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(
+          color: isAdmin ? const Color(0xFFBFDBFE) : const Color(0xFFE2E8F0),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: isAdmin
+                      ? const Color(0xFFDBEAFE)
+                      : const Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(
+                  isAdmin
+                      ? Icons.navigation_outlined
+                      : Icons.file_download_outlined,
+                  color: isAdmin
+                      ? const Color(0xFF1D4ED8)
+                      : const Color(0xFF475569),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  isAdmin ? 'Sistem Navigasi Patroli' : 'Ekspor Data Laporan',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            isAdmin
+                ? 'Buka panel ekspor atau tindak lanjuti laporan warga dengan alur yang lebih cepat.'
+                : 'Unduh ringkasan laporan Anda dalam format CSV, PDF, Word, atau cetak langsung.',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: const Color(0xFF64748B),
+                ),
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: onExport,
+              icon: const Icon(Icons.download_rounded),
+              label: const Text('Buka Aksi Export'),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -2786,63 +3595,6 @@ class _StatusButton extends StatelessWidget {
         ),
         onPressed: active ? null : onTap,
         child: Text(label),
-      ),
-    );
-  }
-}
-
-class _StatCard extends StatelessWidget {
-  const _StatCard(
-      {required this.title, required this.value, this.icon, this.color});
-
-  final String title;
-  final String value;
-  final IconData? icon;
-  final Color? color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Expanded(
-      child: Card(
-        child: Container(
-          padding: const EdgeInsets.all(AppTheme.lg),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(AppTheme.radiusLg),
-            gradient: LinearGradient(
-              colors: [
-                Colors.white,
-                (color ?? AppTheme.primary).withAlpha((0.05 * 255).round()),
-              ],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (icon != null)
-                Icon(icon, color: color ?? AppTheme.primary, size: 24),
-              if (icon != null) const SizedBox(height: AppTheme.md),
-              Text(
-                value,
-                style: GoogleFonts.inter(
-                  fontSize: 24,
-                  fontWeight: FontWeight.w700,
-                  color: AppTheme.neutral900,
-                ),
-              ),
-              const SizedBox(height: AppTheme.sm),
-              Text(
-                title,
-                style: GoogleFonts.inter(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
-                  color: AppTheme.neutral600,
-                ),
-              ),
-            ],
-          ),
-        ),
       ),
     );
   }
