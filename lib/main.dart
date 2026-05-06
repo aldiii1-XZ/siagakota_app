@@ -1,7 +1,6 @@
 import 'dart:io' show File, Platform;
 import 'dart:convert';
 import 'dart:async';
-import 'package:http/http.dart' as http;
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:google_generative_ai/google_generative_ai.dart';
 import 'package:flutter/material.dart';
@@ -157,7 +156,7 @@ class AppUpdateInfo {
   });
 }
 
-/// Representasi user yang disimpan di Firestore.
+/// Representasi user yang disimpan di Supabase.
 class UserProfile {
   final String id;
   final String nama;
@@ -4217,8 +4216,8 @@ class _ReportFormPageState extends State<ReportFormPage> {
   void _onSpeechResult(dynamic result) {
     setState(() {
       _lastWords = result.recognizedWords;
-      // Append to description if listening is done, or update actively
-      deskripsiController.text = _lastWords; 
+      // Perbarui controller deskripsi secara real-time
+      deskripsiController.text = _lastWords;
     });
   }
 
@@ -4280,9 +4279,23 @@ class _ReportFormPageState extends State<ReportFormPage> {
                       _isListening ? Icons.mic : Icons.mic_none,
                       color: _isListening ? Colors.red : null,
                     ),
-                    onPressed: _speechEnabled 
-                      ? (_isListening ? _stopListening : _startListening)
-                      : null,
+                    onPressed: () {
+                      if (!_speechEnabled) {
+                        _initSpeech(); // Coba inisialisasi ulang jika gagal
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Fitur suara belum siap atau izin mikrofon ditolak. Pastikan izin diberikan.'),
+                            duration: Duration(seconds: 2),
+                          ),
+                        );
+                        return;
+                      }
+                      if (_isListening) {
+                        _stopListening();
+                      } else {
+                        _startListening();
+                      }
+                    },
                   ),
                 ),
                 maxLines: 3,
