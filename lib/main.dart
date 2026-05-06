@@ -82,6 +82,16 @@ class CloudSyncService {
         (snap) => snap.map((d) => Report.fromJson(d)).toList());
   }
 
+  Future<List<Report>> fetchReports() async {
+    if (!isReady) return [];
+    try {
+      final List<dynamic> data = await _supabase.from('reports').select();
+      return data.map((d) => Report.fromJson(d)).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
   Future<void> upsertReport(Report report) async {
     if (!isReady) return;
     await _supabase.from('reports').upsert(report.toJson());
@@ -466,6 +476,7 @@ enum ReportStatus { diterima, proses, selesai }
 enum ExportFormat { csv, pdf, doc, print }
 
 const List<String> kecamatanPalembang = [
+  'SEMUA WILAYAH',
   'Alang-Alang Lebar',
   'Bukit Kecil',
   'Gandus',
@@ -664,7 +675,18 @@ class ReportController extends ChangeNotifier {
   ReportController({this.cloud}) {
     loadDrafts();
     loadReports();
+    _fetchInitialFromCloud();
     _attachCloud();
+  }
+
+  Future<void> _fetchInitialFromCloud() async {
+    if (cloud == null) return;
+    // Tunggu sebentar agar isReady benar-benar siap (init async).
+    await Future.delayed(const Duration(milliseconds: 500));
+    final data = await cloud!.fetchReports();
+    if (data.isNotEmpty) {
+      replaceFromCloud(data);
+    }
   }
 
   @override
@@ -1914,9 +1936,11 @@ class ReportListView extends StatelessWidget {
       builder: (context, controller, _) {
         final auth = context.watch<AuthController>();
         final items = auth.isAdmin
-            ? controller.sortedReports
-                .where((r) => r.kecamatan == auth.adminKecamatan)
-                .toList()
+            ? (auth.adminKecamatan == 'SEMUA WILAYAH' || auth.adminKecamatan == null
+                ? controller.sortedReports
+                : controller.sortedReports
+                    .where((r) => r.kecamatan == auth.adminKecamatan)
+                    .toList())
             : controller.sortedReports
                 .where((r) => r.owner == auth.userName)
                 .toList();
@@ -2341,9 +2365,9 @@ class ReportCard extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.image_not_supported_outlined, color: Colors.slate.shade300),
+            Icon(Icons.image_not_supported_outlined, color: Colors.blueGrey.shade300),
             const SizedBox(height: 8),
-            Text('Foto tidak tersedia', style: TextStyle(color: Colors.slate.shade400, fontSize: 12)),
+            Text('Foto tidak tersedia', style: TextStyle(color: Colors.blueGrey.shade400, fontSize: 12)),
           ],
         ),
       );
@@ -2671,9 +2695,11 @@ class DashboardView extends StatelessWidget {
       builder: (ctx, controller, child) {
         final auth = ctx.watch<AuthController>();
         final visible = auth.isAdmin
-            ? controller.reports
-                .where((r) => r.kecamatan == auth.adminKecamatan)
-                .toList()
+            ? (auth.adminKecamatan == 'SEMUA WILAYAH' || auth.adminKecamatan == null
+                ? controller.reports
+                : controller.reports
+                    .where((r) => r.kecamatan == auth.adminKecamatan)
+                    .toList())
             : controller.reports
                 .where((r) => r.owner == auth.userName)
                 .toList();
@@ -3740,7 +3766,9 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
             filtered = filtered.where((r) => r.status == _filter);
           }
           final auth = context.read<AuthController>();
-          filtered = filtered.where((r) => r.kecamatan == auth.adminKecamatan);
+          if (auth.adminKecamatan != 'SEMUA WILAYAH' && auth.adminKecamatan != null) {
+            filtered = filtered.where((r) => r.kecamatan == auth.adminKecamatan);
+          }
           final filteredList = filtered.toList();
 
           final total = rc.reports.length;
