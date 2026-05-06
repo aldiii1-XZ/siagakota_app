@@ -2333,6 +2333,20 @@ class ReportCard extends StatelessWidget {
       ),
     );
   }
+
+  Widget _imageError() => Container(
+        height: 220,
+        color: const Color(0xFFF1F5F9),
+        alignment: Alignment.center,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.image_not_supported_outlined, color: Colors.slate.shade300),
+            const SizedBox(height: 8),
+            Text('Foto tidak tersedia', style: TextStyle(color: Colors.slate.shade400, fontSize: 12)),
+          ],
+        ),
+      );
 }
 
 class StatusChip extends StatelessWidget {
