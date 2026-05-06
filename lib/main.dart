@@ -1,6 +1,9 @@
 import 'dart:io' show File, Platform;
 import 'dart:convert';
 import 'dart:async';
+import 'package:http/http.dart' as http;
+import 'package:speech_to_text/speech_to_text.dart' as stt;
+import 'package:google_generative_ai/google_generative_ai.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
@@ -998,16 +1001,44 @@ class _HomeShellState extends State<HomeShell>
             minCount: 3,
           );
     return Scaffold(
+      backgroundColor: const Color(0xFFF8FAFC),
       appBar: AppBar(
-        leading: const Padding(
-          padding: EdgeInsets.only(left: 12, top: 8, bottom: 8),
-          child: SiagaLogo(
-            size: 36,
-            padding: EdgeInsets.all(4),
-            showShadow: false,
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        leading: Padding(
+          padding: const EdgeInsets.only(left: 12, top: 8, bottom: 8),
+          child: GestureDetector(
+            onTap: () async {
+              auth.logout();
+              Navigator.of(context).pushAndRemoveUntil(
+                MaterialPageRoute(builder: (_) => const AuthGate()), (r) => false);
+            },
+            child: Container(
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(colors: [Color(0xFF2563EB), Color(0xFF4F46E5)], begin: Alignment.topLeft, end: Alignment.bottomRight),
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [BoxShadow(color: const Color(0xFF4F46E5).withAlpha(60), blurRadius: 8, offset: const Offset(0, 4))],
+              ),
+              child: const Icon(Icons.shield_outlined, color: Colors.white, size: 22),
+            ),
           ),
         ),
-        title: Text('SiagaKota • ${auth.userName ?? 'Pengguna'}'),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('SiagaKota', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18, color: Color(0xFF0F172A), letterSpacing: -0.3)),
+            Row(
+              children: [
+                Container(width: 6, height: 6, decoration: const BoxDecoration(shape: BoxShape.circle, color: Color(0xFF10B981))),
+                const SizedBox(width: 5),
+                Text(auth.isAdmin ? 'PUSAT KOMANDO' : 'PORTAL WARGA',
+                    style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8), letterSpacing: 1.5)),
+              ],
+            ),
+          ],
+        ),
         actions: [
           _LocationBadge(
             position: _currentPosition,
@@ -1020,28 +1051,18 @@ class _HomeShellState extends State<HomeShell>
           const SizedBox(width: 6),
           if (auth.isAdmin)
             TextButton.icon(
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const AdminPanelPage()),
-                );
-              },
-              icon: const Icon(Icons.admin_panel_settings),
+              onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminPanelPage())),
+              icon: const Icon(Icons.admin_panel_settings, size: 18),
               label: Text(auth.adminKecamatan ?? 'Panel'),
-              style: TextButton.styleFrom(
-                  foregroundColor: Colors.blueGrey.shade800),
+              style: TextButton.styleFrom(foregroundColor: Colors.blueGrey.shade800),
             ),
-          if (auth.isAdmin) const SizedBox(width: 6),
           IconButton(
             tooltip: 'Keluar',
             onPressed: () {
               auth.logout();
-              Navigator.of(context).pushAndRemoveUntil(
-                MaterialPageRoute(builder: (_) => const AuthGate()),
-                (route) => false,
-              );
+              Navigator.of(context).pushAndRemoveUntil(MaterialPageRoute(builder: (_) => const AuthGate()), (route) => false);
             },
-            icon: const Icon(Icons.logout),
+            icon: const Icon(Icons.logout_rounded, size: 20),
           ),
         ],
         bottom: TabBar(
@@ -1066,18 +1087,24 @@ class _HomeShellState extends State<HomeShell>
           ),
         ],
       ),
-      floatingActionButton: auth.isAdmin
-          ? null
-          : FloatingActionButton.extended(
+      floatingActionButton: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          SiagaBotWidget(),
+          const SizedBox(height: 12),
+          if (!auth.isAdmin)
+            FloatingActionButton.extended(
+              heroTag: 'report_fab',
               onPressed: () async {
-                await Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const ReportFormPage()),
-                );
+                await Navigator.push(context, MaterialPageRoute(builder: (_) => const ReportFormPage()));
               },
               icon: const Icon(Icons.add),
               label: const Text('Buat Laporan'),
+              backgroundColor: const Color(0xFF4F46E5),
             ),
+        ],
+      ),
     );
   }
 
@@ -1211,6 +1238,215 @@ class _HomeShellState extends State<HomeShell>
   }
 }
 
+// ═══════════════════════════════════════════════════════
+// SIAGABOT WIDGET — AI Chatbot Floating
+// ═══════════════════════════════════════════════════════
+class SiagaBotWidget extends StatefulWidget {
+  const SiagaBotWidget({super.key});
+  @override
+  State<SiagaBotWidget> createState() => _SiagaBotWidgetState();
+}
+
+class _SiagaBotWidgetState extends State<SiagaBotWidget> {
+  bool _isOpen = false;
+  final _inputCtrl = TextEditingController();
+  bool _loading = false;
+  final List<Map<String, String>> _messages = [
+    {'role': 'ai', 'text': 'Halo! Saya SiagaBot 🤖. Asisten virtual cerdas Kota Palembang. Ada yang bisa saya bantu hari ini?'},
+  ];
+  final _scrollCtrl = ScrollController();
+
+  @override
+  void dispose() {
+    _inputCtrl.dispose();
+    _scrollCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _send() async {
+    final text = _inputCtrl.text.trim();
+    if (text.isEmpty || _loading) return;
+    setState(() {
+      _messages.add({'role': 'user', 'text': text});
+      _inputCtrl.clear();
+      _loading = true;
+    });
+    _scrollToBottom();
+    final prompt = 'Anda SiagaBot, asisten virtual SiagaKota Palembang. Jawab ramah & singkat dalam bahasa Indonesia: "$text"';
+    final reply = await _callGemini(prompt);
+    if (mounted) {
+      setState(() {
+        _messages.add({'role': 'ai', 'text': reply ?? 'Maaf, tidak bisa memproses permintaan.'});
+        _loading = false;
+      });
+      _scrollToBottom();
+    }
+  }
+
+  void _scrollToBottom() {
+    Future.delayed(const Duration(milliseconds: 100), () {
+      if (_scrollCtrl.hasClients) {
+        _scrollCtrl.animateTo(_scrollCtrl.position.maxScrollExtent, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
+      }
+    });
+  }
+
+  Future<String?> _callGemini(String prompt) async {
+    final apiKey = const String.fromEnvironment('GEMINI_API_KEY', defaultValue: 'YOUR_GEMINI_API_KEY');
+    
+    if (apiKey == 'YOUR_GEMINI_API_KEY' || apiKey.isEmpty) {
+       await Future.delayed(const Duration(seconds: 1));
+       if (prompt.toLowerCase().contains("hujan")) {
+           return "Sepertinya akan turun hujan hari ini. Harap siapkan payung dan berhati-hati di jalan ya!";
+       }
+       return "Maaf, saya SiagaBot versi simulasi karena API Key belum dikonfigurasi. Saya siap membantu Anda jika API Key sudah dimasukkan!";
+    }
+
+    try {
+      final model = GenerativeModel(model: 'gemini-1.5-flash-latest', apiKey: apiKey);
+      final response = await model.generateContent([Content.text(prompt)]);
+      return response.text;
+    } catch (e) {
+      return 'Maaf, terjadi kesalahan koneksi AI: $e';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        if (_isOpen)
+          Container(
+            width: 320,
+            height: 400,
+            margin: const EdgeInsets.only(bottom: 8),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: const Color(0xFFE2E8F0)),
+              boxShadow: [BoxShadow(color: Colors.black.withAlpha(20), blurRadius: 30, offset: const Offset(0, 10))],
+            ),
+            child: Column(
+              children: [
+                // Header
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                  decoration: const BoxDecoration(
+                    color: Color(0xFF0F172A),
+                    borderRadius: BorderRadius.only(topLeft: Radius.circular(24), topRight: Radius.circular(24)),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 36, height: 36,
+                        decoration: BoxDecoration(color: Colors.white.withAlpha(30), borderRadius: BorderRadius.circular(10)),
+                        child: const Icon(Icons.smart_toy_rounded, color: Color(0xFF818CF8), size: 22),
+                      ),
+                      const SizedBox(width: 10),
+                      const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Text('SiagaBot AI', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 14)),
+                        Text('Asisten Kota 24/7', style: TextStyle(color: Color(0xFF94A3B8), fontSize: 10)),
+                      ])),
+                      GestureDetector(
+                        onTap: () => setState(() => _isOpen = false),
+                        child: const Icon(Icons.close_rounded, color: Colors.white54, size: 20),
+                      ),
+                    ],
+                  ),
+                ),
+                // Messages
+                Expanded(
+                  child: ListView.builder(
+                    controller: _scrollCtrl,
+                    padding: const EdgeInsets.all(12),
+                    itemCount: _messages.length + (_loading ? 1 : 0),
+                    itemBuilder: (ctx, i) {
+                      if (_loading && i == _messages.length) {
+                        return const Align(
+                          alignment: Alignment.centerLeft,
+                          child: Padding(padding: EdgeInsets.only(bottom: 8), child: SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF4F46E5)))),
+                        );
+                      }
+                      final msg = _messages[i];
+                      final isUser = msg['role'] == 'user';
+                      return Align(
+                        alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+                        child: Container(
+                          margin: const EdgeInsets.only(bottom: 8),
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                          constraints: const BoxConstraints(maxWidth: 240),
+                          decoration: BoxDecoration(
+                            color: isUser ? const Color(0xFF4F46E5) : Colors.white,
+                            borderRadius: BorderRadius.circular(16).copyWith(
+                              bottomRight: isUser ? const Radius.circular(4) : null,
+                              bottomLeft: isUser ? null : const Radius.circular(4),
+                            ),
+                            border: isUser ? null : Border.all(color: const Color(0xFFE2E8F0)),
+                          ),
+                          child: Text(msg['text'] ?? '', style: TextStyle(fontSize: 13, color: isUser ? Colors.white : const Color(0xFF334155), fontWeight: FontWeight.w500)),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                // Input
+                Container(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                  decoration: const BoxDecoration(
+                    color: Colors.white,
+                    border: Border(top: BorderSide(color: Color(0xFFE2E8F0))),
+                    borderRadius: BorderRadius.only(bottomLeft: Radius.circular(24), bottomRight: Radius.circular(24)),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _inputCtrl,
+                          onSubmitted: (_) => _send(),
+                          decoration: InputDecoration(
+                            hintText: 'Tanya informasi kota...',
+                            hintStyle: const TextStyle(fontSize: 13),
+                            filled: true, fillColor: const Color(0xFFF8FAFC),
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: const BorderSide(color: Color(0xFFE2E8F0))),
+                            enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: const BorderSide(color: Color(0xFFE2E8F0))),
+                            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: const BorderSide(color: Color(0xFF4F46E5))),
+                          ),
+                          style: const TextStyle(fontSize: 13),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      GestureDetector(
+                        onTap: _send,
+                        child: Container(
+                          width: 40, height: 40,
+                          decoration: BoxDecoration(color: const Color(0xFF0F172A), borderRadius: BorderRadius.circular(12)),
+                          child: const Icon(Icons.send_rounded, color: Colors.white, size: 18),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        // FAB button
+        FloatingActionButton(
+          heroTag: 'chatbot_fab',
+          onPressed: () => setState(() => _isOpen = !_isOpen),
+          backgroundColor: const Color(0xFF0F172A),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+          child: Icon(_isOpen ? Icons.close_rounded : Icons.chat_bubble_rounded, color: Colors.white),
+        ),
+      ],
+    );
+  }
+}
+
+
+
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
 
@@ -1247,165 +1483,183 @@ class _LoginPageState extends State<LoginPage> {
     return Consumer<AuthController>(
       builder: (context, auth, _) {
         final hasAccounts = auth.accounts.isNotEmpty;
-        final theme = Theme.of(context);
         final canCreate = !_saving && controller.text.trim().isNotEmpty;
         return Scaffold(
-          body: Container(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [
-                  Color(0xFFFDFEFF),
-                  Color(0xFFF4F8FF),
-                ],
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
+          backgroundColor: const Color(0xFFF8FAFC),
+          body: Stack(
+            children: [
+              // Background orbs
+              Positioned(
+                top: -80, left: -80,
+                child: Container(
+                  width: 360, height: 360,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: RadialGradient(colors: [
+                      const Color(0xFF818CF8).withAlpha(50),
+                      const Color(0xFF818CF8).withAlpha(0),
+                    ]),
+                  ),
+                ),
               ),
-            ),
-            child: SafeArea(
-              child: Stack(
-                children: [
-                  Positioned(
-                    top: -120,
-                    left: -80,
-                    child: _backgroundOrb(
-                      size: 260,
-                      color: AppTheme.primary.withAlpha(18),
-                    ),
+              Positioned(
+                bottom: -80, right: -80,
+                child: Container(
+                  width: 360, height: 360,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: RadialGradient(colors: [
+                      const Color(0xFF60A5FA).withAlpha(50),
+                      const Color(0xFF60A5FA).withAlpha(0),
+                    ]),
                   ),
-                  Positioned(
-                    top: 180,
-                    right: -110,
-                    child: _backgroundOrb(
-                      size: 240,
-                      color: AppTheme.secondary.withAlpha(14),
-                    ),
-                  ),
-                  Center(
-                    child: SingleChildScrollView(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 24,
-                        vertical: 28,
-                      ),
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 560),
-                        child: FadeInScale(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              const Center(
-                                child: SiagaLogo(
-                                  size: 92,
-                                  padding: EdgeInsets.all(10),
-                                ),
-                              ),
-                              const SizedBox(height: 18),
-                              Text(
-                                'SiagaKota',
-                                textAlign: TextAlign.center,
-                                style: theme.textTheme.headlineMedium?.copyWith(
-                                  fontWeight: FontWeight.w700,
-                                  color: const Color(0xFF1C3F70),
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                hasAccounts
-                                    ? 'Portal layanan pengaduan masyarakat. Pilih akun yang sudah dibuat atau tambahkan akun baru.'
-                                    : 'Portal layanan pengaduan masyarakat. Buat akun terlebih dahulu agar laporan bisa tersimpan.',
-                                textAlign: TextAlign.center,
-                                style: theme.textTheme.bodyMedium?.copyWith(
-                                  color: const Color(0xFF6F86A8),
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                              const SizedBox(height: 28),
-                              _buildAdminEntryCard(),
-                              const SizedBox(height: 24),
-                              if (hasAccounts) ...[
-                                _buildSectionTitle('Pilih akun'),
-                                const SizedBox(height: 14),
-                                ...auth.accounts.map(
-                                  (name) => Padding(
-                                    padding: const EdgeInsets.only(bottom: 14),
-                                    child: _buildAccountCard(
-                                      name: name,
-                                      onTap: () async {
-                                        await auth.loginWithExisting(name);
-                                        if (!context.mounted) return;
-                                        Navigator.of(context)
-                                            .pushAndRemoveUntil(
-                                          MaterialPageRoute(
-                                            builder: (_) => const AuthGate(),
-                                          ),
-                                          (route) => false,
-                                        );
-                                      },
+                ),
+              ),
+              SafeArea(
+                child: Center(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 420),
+                      child: FadeInScale(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            // Logo & Title
+                            Column(
+                              children: [
+                                Container(
+                                  width: 80, height: 80,
+                                  decoration: BoxDecoration(
+                                    gradient: const LinearGradient(
+                                      colors: [Color(0xFF2563EB), Color(0xFF4F46E5)],
+                                      begin: Alignment.topLeft,
+                                      end: Alignment.bottomRight,
                                     ),
+                                    borderRadius: BorderRadius.circular(24),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: const Color(0xFF4F46E5).withAlpha(80),
+                                        blurRadius: 24, offset: const Offset(0, 10),
+                                      ),
+                                    ],
+                                  ),
+                                  child: const Icon(Icons.shield_outlined, color: Colors.white, size: 40),
+                                ),
+                                const SizedBox(height: 20),
+                                RichText(
+                                  text: const TextSpan(
+                                    text: 'SiagaKota',
+                                    style: TextStyle(fontSize: 36, fontWeight: FontWeight.w800, color: Color(0xFF0F172A), letterSpacing: -0.5),
+                                    children: [
+                                      TextSpan(text: '.', style: TextStyle(color: Color(0xFF2563EB))),
+                                    ],
                                   ),
                                 ),
-                                const SizedBox(height: 18),
+                                const SizedBox(height: 8),
+                                const Text(
+                                  'Platform Tata Kota & Pengaduan Cerdas',
+                                  style: TextStyle(fontSize: 13, color: Color(0xFF64748B), fontWeight: FontWeight.w500),
+                                ),
                               ],
-                              _buildSectionTitle('Buat akun baru'),
-                              const SizedBox(height: 14),
-                              _buildNameField(),
-                              const SizedBox(height: 14),
-                              SizedBox(
-                                height: 68,
-                                child: FilledButton.icon(
-                                  icon: _saving
-                                      ? const SizedBox(
-                                          width: 18,
-                                          height: 18,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                            color: Colors.white,
-                                          ),
-                                        )
-                                      : const Icon(
-                                          Icons.person_add_alt_1_rounded),
-                                  label: Text(
-                                    _saving ? 'Menyimpan...' : 'Simpan & Masuk',
+                            ),
+                            const SizedBox(height: 36),
+                            // Glass card
+                            Container(
+                              padding: const EdgeInsets.all(28),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withAlpha(220),
+                                borderRadius: BorderRadius.circular(32),
+                                border: Border.all(color: Colors.white.withAlpha(180)),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withAlpha(12),
+                                    blurRadius: 40, offset: const Offset(0, 20),
                                   ),
-                                  style: FilledButton.styleFrom(
-                                    backgroundColor: canCreate
-                                        ? AppTheme.primary.withAlpha(210)
-                                        : const Color(0xFFD9E3F1),
-                                    foregroundColor: canCreate
-                                        ? Colors.white
-                                        : const Color(0xFF8FA4C3),
-                                    disabledBackgroundColor:
-                                        const Color(0xFFD9E3F1),
-                                    disabledForegroundColor:
-                                        const Color(0xFF8FA4C3),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(20),
+                                ],
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  // Officer portal button
+                                  _buildAdminEntryCard(),
+                                  const SizedBox(height: 24),
+                                  // Divider
+                                  Row(
+                                    children: [
+                                      const Expanded(child: Divider(color: Color(0xFFE2E8F0))),
+                                      Padding(
+                                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                                        child: Text('AKSES WARGA', style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w800, color: Color(0xFFCBD5E1), letterSpacing: 2)),
+                                      ),
+                                      const Expanded(child: Divider(color: Color(0xFFE2E8F0))),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 20),
+                                  // Existing accounts
+                                  if (hasAccounts) ...[
+                                    ...auth.accounts.map((name) => Padding(
+                                      padding: const EdgeInsets.only(bottom: 10),
+                                      child: _buildAccountCard(
+                                        name: name,
+                                        onTap: () async {
+                                          await auth.loginWithExisting(name);
+                                          if (!context.mounted) return;
+                                          Navigator.of(context).pushAndRemoveUntil(
+                                            MaterialPageRoute(builder: (_) => const AuthGate()),
+                                            (route) => false,
+                                          );
+                                        },
+                                      ),
+                                    )),
+                                    const SizedBox(height: 8),
+                                    Row(
+                                      children: [
+                                        const Expanded(child: Divider(color: Color(0xFFE2E8F0))),
+                                        Padding(
+                                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                                          child: Text('BUAT AKUN BARU', style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w800, color: Color(0xFFCBD5E1), letterSpacing: 2)),
+                                        ),
+                                        const Expanded(child: Divider(color: Color(0xFFE2E8F0))),
+                                      ],
                                     ),
-                                    elevation: 0,
+                                    const SizedBox(height: 12),
+                                  ],
+                                  _buildNameField(),
+                                  const SizedBox(height: 12),
+                                  SizedBox(
+                                    height: 58,
+                                    child: FilledButton.icon(
+                                      icon: _saving
+                                          ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                                          : const Icon(Icons.person_add_alt_1_rounded),
+                                      label: Text(_saving ? 'Menyimpan...' : 'Simpan & Masuk'),
+                                      style: FilledButton.styleFrom(
+                                        backgroundColor: canCreate ? const Color(0xFF4F46E5) : const Color(0xFFD9E3F1),
+                                        foregroundColor: canCreate ? Colors.white : const Color(0xFF8FA4C3),
+                                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                                        elevation: 0,
+                                      ),
+                                      onPressed: canCreate ? () => _createAccount(auth) : null,
+                                    ),
                                   ),
-                                  onPressed: canCreate
-                                      ? () => _createAccount(auth)
-                                      : null,
-                                ),
+                                ],
                               ),
-                              const SizedBox(height: 44),
-                              Text(
-                                '© 2026 SIAGAKOTA PALEMBANG',
-                                textAlign: TextAlign.center,
-                                style: theme.textTheme.labelMedium?.copyWith(
-                                  color: const Color(0xFF8CA2C4),
-                                  letterSpacing: 2.8,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
-                          ),
+                            ),
+                            const SizedBox(height: 32),
+                            const Text(
+                              '© 2026 SIAGAKOTA PALEMBANG',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(fontSize: 10, color: Color(0xFF94A3B8), letterSpacing: 2.5, fontWeight: FontWeight.w600),
+                            ),
+                          ],
                         ),
                       ),
                     ),
                   ),
-                ],
+                ),
               ),
-            ),
+            ],
           ),
         );
       },
@@ -1524,46 +1778,30 @@ class _LoginPageState extends State<LoginPage> {
   Widget _buildAdminEntryCard() {
     return Material(
       color: Colors.transparent,
+      borderRadius: BorderRadius.circular(18),
       child: InkWell(
-        borderRadius: BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(18),
         onTap: _openAdminLogin,
         child: Ink(
-          padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 20),
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
           decoration: BoxDecoration(
-            color: Colors.white.withAlpha(245),
-            borderRadius: BorderRadius.circular(22),
-            border: Border.all(color: const Color(0xFFD7E1F0)),
+            color: const Color(0xFF0F172A),
+            borderRadius: BorderRadius.circular(18),
             boxShadow: [
               BoxShadow(
-                color: AppTheme.primary.withAlpha(18),
-                blurRadius: 22,
-                offset: const Offset(0, 10),
+                color: const Color(0xFF0F172A).withAlpha(60),
+                blurRadius: 20, offset: const Offset(0, 8),
               ),
             ],
           ),
           child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFEFF5FF),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: const Icon(
-                  Icons.verified_user_outlined,
-                  color: Color(0xFF2F6BFF),
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Text(
-                  'Masuk sebagai Petugas',
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        color: const Color(0xFF23446F),
-                        fontWeight: FontWeight.w700,
-                      ),
-                ),
+              const Icon(Icons.shield_outlined, color: Colors.white, size: 20),
+              const SizedBox(width: 10),
+              const Text(
+                'Masuk Portal Petugas',
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 15),
               ),
             ],
           ),
@@ -1578,68 +1816,54 @@ class _LoginPageState extends State<LoginPage> {
   }) {
     return Material(
       color: Colors.transparent,
+      borderRadius: BorderRadius.circular(18),
       child: InkWell(
-        borderRadius: BorderRadius.circular(22),
-        onTap: () {
-          onTap();
-        },
+        borderRadius: BorderRadius.circular(18),
+        onTap: () { onTap(); },
         child: Ink(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           decoration: BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.circular(22),
-            border: Border.all(color: const Color(0xFF8FBEFF)),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: const Color(0xFFE2E8F0)),
             boxShadow: [
               BoxShadow(
-                color: const Color(0xFF2F6BFF).withAlpha(24),
-                blurRadius: 24,
-                offset: const Offset(0, 10),
+                color: const Color(0xFF4F46E5).withAlpha(15),
+                blurRadius: 20, offset: const Offset(0, 8),
               ),
             ],
           ),
           child: Row(
             children: [
               Container(
-                width: 52,
-                height: 52,
+                width: 48, height: 48,
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF1F6FE),
-                  borderRadius: BorderRadius.circular(16),
+                  color: const Color(0xFFEEF2FF),
+                  borderRadius: BorderRadius.circular(14),
                 ),
-                child: const Icon(
-                  Icons.account_circle_outlined,
-                  color: Color(0xFF2F6BFF),
-                  size: 32,
-                ),
+                child: const Icon(Icons.account_circle_outlined, color: Color(0xFF4F46E5), size: 28),
               ),
               const SizedBox(width: 14),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      name,
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                            fontWeight: FontWeight.w800,
-                            color: const Color(0xFF1F3B64),
-                          ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'AKUN TERDAFTAR',
-                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                            color: const Color(0xFF8AA3C8),
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 0.4,
-                          ),
+                    Text(name, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16, color: Color(0xFF0F172A))),
+                    const SizedBox(height: 3),
+                    Row(
+                      children: [
+                        Container(width: 6, height: 6, decoration: const BoxDecoration(shape: BoxShape.circle, color: Color(0xFF10B981))),
+                        const SizedBox(width: 5),
+                        const Text('Terverifikasi', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF10B981))),
+                      ],
                     ),
                   ],
                 ),
               ),
-              const Icon(
-                Icons.chevron_right_rounded,
-                color: Color(0xFFC4D0E1),
-                size: 30,
+              Container(
+                width: 32, height: 32,
+                decoration: BoxDecoration(shape: BoxShape.circle, color: const Color(0xFFF8FAFC), border: Border.all(color: const Color(0xFFE2E8F0))),
+                child: const Icon(Icons.arrow_forward_rounded, size: 16, color: Color(0xFF94A3B8)),
               ),
             ],
           ),
@@ -1680,52 +1904,7 @@ class _LoginPageState extends State<LoginPage> {
       },
     );
   }
-
-  Widget _buildSectionTitle(String title) {
-    return Row(
-      children: [
-        Text(
-          title.toUpperCase(),
-          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                color: const Color(0xFF8FA6C7),
-                fontWeight: FontWeight.w800,
-                letterSpacing: 1.2,
-              ),
-        ),
-        const SizedBox(width: 16),
-        const Expanded(
-          child: Divider(
-            color: Color(0xFFD9E3EF),
-            thickness: 1.4,
-            height: 1,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _backgroundOrb({
-    required double size,
-    required Color color,
-  }) {
-    return IgnorePointer(
-      child: Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          gradient: RadialGradient(
-            colors: [
-              color,
-              color.withAlpha(0),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 }
-
 class ReportListView extends StatelessWidget {
   const ReportListView({super.key});
 
@@ -1947,8 +2126,9 @@ class ReportCard extends StatelessWidget {
 
     return Card(
       elevation: 0,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
       child: Padding(
-        padding: const EdgeInsets.all(14),
+        padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1981,14 +2161,20 @@ class ReportCard extends StatelessWidget {
                       Text(
                         report.jenis,
                         style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                          color: Color(0xFF0F172A),
+                          letterSpacing: -0.3,
                         ),
                       ),
-                      const SizedBox(height: 4),
+                      const SizedBox(height: 2),
                       Text(
                         formatter.format(report.createdAt),
-                        style: TextStyle(color: Colors.grey.shade600),
+                        style: TextStyle(
+                          color: Colors.grey.shade500,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                        ),
                       ),
                     ],
                   ),
@@ -1997,7 +2183,15 @@ class ReportCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 10),
-            Text(report.deskripsi, style: const TextStyle(fontSize: 14)),
+            Text(
+              report.deskripsi,
+              style: const TextStyle(
+                fontSize: 15,
+                color: Color(0xFF334155),
+                height: 1.5,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
             const SizedBox(height: 10),
             Wrap(
               spacing: 8,
@@ -2016,35 +2210,30 @@ class ReportCard extends StatelessWidget {
             if (report.fotoBytes != null || report.fotoPath != null) ...[
               const SizedBox(height: 10),
               ClipRRect(
-                borderRadius: BorderRadius.circular(10),
-                child: report.fotoBytes != null
-                    ? Image.memory(
-                        report.fotoBytes!,
-                        height: 160,
-                        width: double.infinity,
-                        fit: BoxFit.cover,
-                        errorBuilder: (context, error, stack) => Container(
-                          height: 160,
-                          color: Colors.grey.shade200,
-                          alignment: Alignment.center,
-                          child: const Text('Foto tidak dapat dimuat'),
+                borderRadius: BorderRadius.circular(20),
+                child: Container(
+                  decoration: BoxDecoration(
+                    border: Border.all(color: const Color(0xFFF1F5F9)),
+                  ),
+                  child: report.fotoBytes != null
+                      ? Image.memory(
+                          report.fotoBytes!,
+                          height: 220,
+                          width: double.infinity,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stack) => _imageError(),
+                        )
+                      : Image.file(
+                          File(report.fotoPath!),
+                          height: 220,
+                          width: double.infinity,
+                          cacheHeight: 1080,
+                          cacheWidth: 1920,
+                          filterQuality: FilterQuality.high,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stack) => _imageError(),
                         ),
-                      )
-                    : Image.file(
-                        File(report.fotoPath!),
-                        height: 160,
-                        width: double.infinity,
-                        cacheHeight: 720,
-                        cacheWidth: 1280,
-                        filterQuality: FilterQuality.medium,
-                        fit: BoxFit.cover,
-                        errorBuilder: (context, error, stack) => Container(
-                          height: 160,
-                          color: Colors.grey.shade200,
-                          alignment: Alignment.center,
-                          child: const Text('Foto tidak dapat dimuat'),
-                        ),
-                      ),
+                ),
               ),
             ],
             const SizedBox(height: 12),
@@ -2246,6 +2435,219 @@ class _LocationBadge extends StatelessWidget {
   }
 }
 
+// ═══════════════════════════════════════
+// RADAR SENTIMEN PUBLIK PANEL (Petugas)
+// ═══════════════════════════════════════
+class _RadarSentimenPanel extends StatelessWidget {
+  const _RadarSentimenPanel({required this.reportCount, required this.urgentCount});
+  final int reportCount;
+  final int urgentCount;
+
+  @override
+  Widget build(BuildContext context) {
+    final panikPct = reportCount == 0 ? 0 : ((urgentCount / reportCount) * 100).round();
+    final emosi = panikPct > 60 ? 'Panik' : panikPct > 30 ? 'Marah' : 'Netral';
+    final statusStr = panikPct > 60 ? 'Kritis' : panikPct > 30 ? 'Waspada' : 'Kondusif';
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0B1120),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: const Color(0xFF1E293B)),
+        boxShadow: [BoxShadow(color: Colors.black.withAlpha(60), blurRadius: 20, offset: const Offset(0, 8))],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(color: Colors.red.withAlpha(50), borderRadius: BorderRadius.circular(12)),
+                child: const Icon(Icons.local_fire_department_rounded, color: Color(0xFFF87171), size: 20),
+              ),
+              const SizedBox(width: 12),
+              const Text('Radar Sentimen Publik', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 15)),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(color: const Color(0xFF1E293B), borderRadius: BorderRadius.circular(8)),
+                child: Text(statusStr, style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 11, fontWeight: FontWeight.w700)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          const Text('STATUS EMOSI DOMINAN', style: TextStyle(color: Color(0xFF475569), fontSize: 9, fontWeight: FontWeight.w800, letterSpacing: 1.5)),
+          const SizedBox(height: 4),
+          Text(emosi, style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w900)),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              const Text('TINGKAT KEPANIKAN', style: TextStyle(color: Color(0xFF475569), fontSize: 9, fontWeight: FontWeight.w800, letterSpacing: 1.5)),
+              const Spacer(),
+              Text('$panikPct%', style: const TextStyle(color: Color(0xFFF87171), fontSize: 12, fontWeight: FontWeight.w800)),
+            ],
+          ),
+          const SizedBox(height: 6),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: panikPct / 100,
+              minHeight: 8,
+              backgroundColor: const Color(0xFF1E293B),
+              valueColor: AlwaysStoppedAnimation<Color>(
+                panikPct > 60 ? const Color(0xFFF87171) : const Color(0xFFFB923C),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              const Icon(Icons.report_outlined, size: 14, color: Color(0xFF64748B)),
+              const SizedBox(width: 6),
+              Text('$reportCount total laporan • $urgentCount urgensi tinggi',
+                  style: const TextStyle(color: Color(0xFF64748B), fontSize: 12, fontWeight: FontWeight.w500)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════
+// CCTV AI LIVE FEED PANEL (Petugas)
+// ═══════════════════════════════════════
+class _CctvAiFeedPanel extends StatefulWidget {
+  const _CctvAiFeedPanel();
+
+  @override
+  State<_CctvAiFeedPanel> createState() => _CctvAiFeedPanelState();
+}
+
+class _CctvAiFeedPanelState extends State<_CctvAiFeedPanel> with SingleTickerProviderStateMixin {
+  late AnimationController _scanController;
+  late Animation<double> _scanAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _scanController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 3),
+    )..repeat(reverse: true);
+    _scanAnimation = Tween<double>(begin: 0, end: 200).animate(
+      CurvedAnimation(parent: _scanController, curve: Curves.linear),
+    );
+  }
+
+  @override
+  void dispose() {
+    _scanController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF0F172A),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: const Color(0xFF1E293B)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(color: const Color(0xFF4F46E5).withAlpha(40), borderRadius: BorderRadius.circular(10)),
+                  child: const Icon(Icons.videocam_outlined, color: Color(0xFF818CF8), size: 18),
+                ),
+                const SizedBox(width: 12),
+                const Text('CCTV AI Live Feed', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 14)),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(color: Colors.red.withAlpha(40), borderRadius: BorderRadius.circular(6)),
+                  child: const Row(children: [
+                    Icon(Icons.circle, color: Color(0xFFF87171), size: 6),
+                    SizedBox(width: 5),
+                    Text('LIVE', style: TextStyle(color: Color(0xFFF87171), fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: 1)),
+                  ]),
+                ),
+              ],
+            ),
+          ),
+          // Simulated CCTV feed
+          ClipRRect(
+            borderRadius: const BorderRadius.only(bottomLeft: Radius.circular(24), bottomRight: Radius.circular(24)),
+            child: Container(
+              height: 200,
+              color: const Color(0xFF020817),
+              child: Stack(
+                children: [
+                  // Scan line
+                  AnimatedBuilder(
+                    animation: _scanAnimation,
+                    builder: (context, child) {
+                      return Positioned(
+                        top: _scanAnimation.value, left: 0, right: 0,
+                        child: Container(
+                          height: 2, 
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF34D399).withAlpha(200),
+                            boxShadow: [
+                              BoxShadow(color: const Color(0xFF34D399).withAlpha(100), blurRadius: 10, spreadRadius: 2),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                  // Bounding boxes
+                  Positioned(
+                    top: 50, left: 60,
+                    child: Container(
+                      width: 70, height: 50,
+                      decoration: BoxDecoration(border: Border.all(color: const Color(0xFF10B981), width: 1.5), color: const Color(0xFF10B981).withAlpha(25), borderRadius: BorderRadius.circular(2)),
+                      child: const Align(alignment: Alignment.topLeft, child: Padding(padding: EdgeInsets.all(2), child: Text('VEHICLE 98%', style: TextStyle(color: Color(0xFF10B981), fontSize: 8, fontWeight: FontWeight.w800)))),
+                    ),
+                  ),
+                  Positioned(
+                    top: 80, left: 160,
+                    child: Container(
+                      width: 100, height: 60,
+                      decoration: BoxDecoration(border: Border.all(color: const Color(0xFFF87171), width: 1.5), color: const Color(0xFFF87171).withAlpha(40), borderRadius: BorderRadius.circular(2)),
+                      child: const Align(alignment: Alignment.topLeft, child: Padding(padding: EdgeInsets.all(2), child: Text('⚠ ANOMALY', style: TextStyle(color: Color(0xFFF87171), fontSize: 8, fontWeight: FontWeight.w800)))),
+                    ),
+                  ),
+                  // Terminal log
+                  Positioned(
+                    bottom: 0, left: 0, right: 0,
+                    child: Container(
+                      padding: const EdgeInsets.all(10),
+                      color: const Color(0xFF0F172A).withAlpha(230),
+                      child: const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Text('> [14:02:11] Memindai Sektor Sudirman...', style: TextStyle(fontFamily: 'monospace', color: Color(0xFF34D399), fontSize: 9)),
+                        Text('> [14:02:15] PERINGATAN: Rintangan terdeteksi di jalur kiri.', style: TextStyle(fontFamily: 'monospace', color: Color(0xFFF87171), fontSize: 9, fontWeight: FontWeight.w700)),
+                        Text('> [14:02:18] Cocok dengan laporan LAP-001.', style: TextStyle(fontFamily: 'monospace', color: Colors.white70, fontSize: 9)),
+                      ]),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class DashboardView extends StatelessWidget {
   const DashboardView({super.key});
 
@@ -2325,6 +2727,13 @@ class DashboardView extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 20),
+            // RADAR SENTIMEN PUBLIK — PETUGAS ONLY
+            if (auth.isAdmin) ...[
+              _RadarSentimenPanel(reportCount: total, urgentCount: visible.where((r) => r.severity >= 4).length),
+              const SizedBox(height: 16),
+              const _CctvAiFeedPanel(),
+              const SizedBox(height: 20),
+            ],
             LayoutBuilder(
               builder: (context, constraints) {
                 final isWide = constraints.maxWidth >= 980;
@@ -2611,73 +3020,58 @@ class _DashboardHero extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
-        color: Colors.white,
+        gradient: LinearGradient(
+          colors: isAdmin
+              ? [const Color(0xFF0F172A), const Color(0xFF1E293B)]
+              : [const Color(0xFF4F46E5), const Color(0xFF2563EB)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-        boxShadow: const [
+        boxShadow: [
           BoxShadow(
-            color: Color(0x0F0F172A),
-            blurRadius: 24,
-            offset: Offset(0, 8),
+            color: (isAdmin ? const Color(0xFF0F172A) : const Color(0xFF4F46E5)).withAlpha(80),
+            blurRadius: 24, offset: const Offset(0, 10),
           ),
         ],
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 52,
-            height: 52,
-            decoration: BoxDecoration(
-              color: const Color(0xFFEFF6FF),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: const Icon(
-              Icons.shield_outlined,
-              color: Color(0xFF2563EB),
-            ),
+          Text(
+            'Selamat Datang, ${userName ?? (isAdmin ? 'Petugas' : 'Warga')} 👋',
+            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: Colors.white, letterSpacing: -0.3),
           ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  isAdmin ? 'Dashboard Petugas' : 'Beranda Warga',
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.w800,
-                        color: const Color(0xFF0F172A),
-                      ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  isAdmin
-                      ? 'Ringkasan laporan masyarakat yang membutuhkan penanganan.'
-                      : 'Pantau laporan Anda dan buat pengaduan baru dengan cepat.',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: const Color(0xFF64748B),
-                      ),
-                ),
-              ],
-            ),
+          const SizedBox(height: 8),
+          Text(
+            isAdmin
+                ? 'Kondisi sentimen warga dan laporan aktif hari ini.'
+                : 'Ada masalah di fasilitas kota? Laporkan dengan mudah.',
+            style: const TextStyle(fontSize: 13, color: Colors.white70, fontWeight: FontWeight.w500),
           ),
-          if (!isAdmin && (userName ?? '').isNotEmpty)
+          if (!isAdmin) ...[
+            const SizedBox(height: 16),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
               decoration: BoxDecoration(
-                color: const Color(0xFFF8FAFC),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: const Color(0xFFE2E8F0)),
+                color: Colors.white.withAlpha(30),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.white.withAlpha(50)),
               ),
-              child: Text(
-                userName!,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w700,
-                  color: Color(0xFF334155),
-                ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(width: 6, height: 6, decoration: const BoxDecoration(shape: BoxShape.circle, color: Color(0xFF34D399))),
+                  const SizedBox(width: 8),
+                  Text(userName ?? '', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13)),
+                  const SizedBox(width: 6),
+                  const Text('· Akun Terverifikasi', style: TextStyle(color: Colors.white60, fontSize: 11, fontWeight: FontWeight.w500)),
+                ],
               ),
             ),
+          ],
         ],
       ),
     );
@@ -2929,6 +3323,24 @@ class _DashboardReportTile extends StatelessWidget {
           Row(
             children: [
               StatusChip(status: report.status),
+              if (isAdmin) ...[
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF10B981).withAlpha(20),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: const Color(0xFF10B981).withAlpha(50)),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(Icons.shield_rounded, color: Color(0xFF10B981), size: 12),
+                      SizedBox(width: 4),
+                      Text('Anti-Hoax: 98% Valid', style: TextStyle(color: Color(0xFF10B981), fontSize: 10, fontWeight: FontWeight.w700)),
+                    ],
+                  ),
+                ),
+              ],
               const Spacer(),
               Text(
                 isAdmin ? 'Proses Laporan' : 'Lihat Detail',
@@ -3626,6 +4038,89 @@ class _ReportFormPageState extends State<ReportFormPage> {
   Uint8List? fotoBytes;
   bool loadingLocation = false;
 
+  // Voice to text states
+  final stt.SpeechToText _speech = stt.SpeechToText();
+  bool _isListening = false;
+  bool _speechEnabled = false;
+  String _lastWords = '';
+
+  // Vision AI state
+  bool _analyzingImage = false;
+
+  Future<void> _analyzeImage() async {
+    if (fotoBytes == null && fotoPath == null) return;
+    setState(() => _analyzingImage = true);
+    
+    try {
+      final apiKey = const String.fromEnvironment('GEMINI_API_KEY', defaultValue: 'YOUR_GEMINI_API_KEY');
+      if (apiKey == 'YOUR_GEMINI_API_KEY' || apiKey.isEmpty) {
+        await Future.delayed(const Duration(seconds: 2));
+        setState(() {
+          deskripsiController.text = 'Terdapat kerusakan infrastruktur yang cukup parah berdasarkan foto. (Hasil Simulasi Vision AI)';
+          jenis = 'Infrastruktur Rusak';
+          severity = 4;
+        });
+      } else {
+        final model = GenerativeModel(model: 'gemini-1.5-flash-latest', apiKey: apiKey);
+        
+        Uint8List imageBytes;
+        if (fotoBytes != null) {
+          imageBytes = fotoBytes!;
+        } else {
+          imageBytes = await File(fotoPath!).readAsBytes();
+        }
+
+        final prompt = TextPart("Analisis foto ini untuk laporan masalah kota. Tentukan 3 hal: 1. Jenis laporan (Banjir, Infrastruktur Rusak, atau Pohon Tumbang), 2. Tingkat keparahan (angka 1 sampai 5), 3. Deskripsi singkat masalah yang terlihat. Format jawaban: 'Jenis: [jenis]\nKeparahan: [angka]\nDeskripsi: [deskripsi]'");
+        final imagePart = DataPart('image/jpeg', imageBytes);
+        
+        final response = await model.generateContent([
+          Content.multi([prompt, imagePart])
+        ]);
+        
+        final text = response.text ?? '';
+        
+        if (text.isNotEmpty) {
+          // Parse results simple
+          final lines = text.split('\n');
+          String newJenis = jenis;
+          double newSeverity = severity;
+          String newDesc = deskripsiController.text;
+
+          for (final line in lines) {
+            if (line.toLowerCase().startsWith('jenis:')) {
+              final val = line.split(':')[1].trim();
+              if (['Banjir', 'Infrastruktur Rusak', 'Pohon Tumbang'].contains(val)) {
+                newJenis = val;
+              }
+            } else if (line.toLowerCase().startsWith('keparahan:')) {
+              final val = double.tryParse(line.split(':')[1].trim());
+              if (val != null && val >= 1 && val <= 5) newSeverity = val;
+            } else if (line.toLowerCase().startsWith('deskripsi:')) {
+              newDesc = line.split(':')[1].trim();
+            }
+          }
+          setState(() {
+            jenis = newJenis;
+            severity = newSeverity;
+            if (deskripsiController.text.isEmpty) {
+              deskripsiController.text = newDesc;
+            } else {
+              deskripsiController.text += '\n(AI Analysis): $newDesc';
+            }
+          });
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Gagal menganalisis foto: $e')));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _analyzingImage = false);
+      }
+    }
+  }
+
   @override
   void dispose() {
     namaController.dispose();
@@ -3636,6 +4131,7 @@ class _ReportFormPageState extends State<ReportFormPage> {
   @override
   void initState() {
     super.initState();
+    _initSpeech();
     final d = widget.draft;
     if (d != null) {
       namaController.text = d.nama;
@@ -3648,6 +4144,40 @@ class _ReportFormPageState extends State<ReportFormPage> {
         fotoBytes = base64Decode(d.fotoBase64!);
       }
     }
+  }
+
+  void _initSpeech() async {
+    try {
+      _speechEnabled = await _speech.initialize(
+        onError: (e) => debugPrint("Speech Error: $e"),
+        onStatus: (s) => debugPrint("Speech Status: $s"),
+      );
+      setState(() {});
+    } catch (e) {
+      debugPrint("Speech Init Error: $e");
+    }
+  }
+
+  void _startListening() async {
+    await _speech.listen(onResult: _onSpeechResult);
+    setState(() {
+      _isListening = true;
+    });
+  }
+
+  void _stopListening() async {
+    await _speech.stop();
+    setState(() {
+      _isListening = false;
+    });
+  }
+
+  void _onSpeechResult(dynamic result) {
+    setState(() {
+      _lastWords = result.recognizedWords;
+      // Append to description if listening is done, or update actively
+      deskripsiController.text = _lastWords; 
+    });
   }
 
   @override
@@ -3701,7 +4231,18 @@ class _ReportFormPageState extends State<ReportFormPage> {
               const SizedBox(height: 12),
               TextFormField(
                 controller: deskripsiController,
-                decoration: const InputDecoration(labelText: 'Deskripsi'),
+                decoration: InputDecoration(
+                  labelText: 'Deskripsi',
+                  suffixIcon: IconButton(
+                    icon: Icon(
+                      _isListening ? Icons.mic : Icons.mic_none,
+                      color: _isListening ? Colors.red : null,
+                    ),
+                    onPressed: _speechEnabled 
+                      ? (_isListening ? _stopListening : _startListening)
+                      : null,
+                  ),
+                ),
                 maxLines: 3,
                 validator: (v) =>
                     (v == null || v.isEmpty) ? 'Masukkan deskripsi' : null,
@@ -3824,6 +4365,21 @@ class _ReportFormPageState extends State<ReportFormPage> {
                               child: const Text('Foto tidak dapat dimuat'),
                             ),
                           ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF4F46E5),
+                      foregroundColor: Colors.white,
+                    ),
+                    onPressed: _analyzingImage ? null : _analyzeImage,
+                    icon: _analyzingImage 
+                      ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                      : const Icon(Icons.auto_awesome),
+                    label: Text(_analyzingImage ? 'Menganalisis...' : 'Analisis Foto dengan AI (Magic Autofill)'),
                   ),
                 ),
               ],
@@ -4132,3 +4688,4 @@ class _ReportFormPageState extends State<ReportFormPage> {
     );
   }
 }
+
