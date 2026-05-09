@@ -1,5 +1,4 @@
 import 'dart:io' show File, Platform;
-import 'dart:convert';
 import 'dart:async';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:google_generative_ai/google_generative_ai.dart';
@@ -10,25 +9,24 @@ import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
-import 'package:uuid/uuid.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:pdf/pdf.dart' as pdf;
 import 'package:share_plus/share_plus.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart'; /*  */
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'update_service.dart';
 import 'theme.dart';
 import 'components.dart';
+import 'models/index.dart';
+import 'controllers/index.dart';
+import 'services/index.dart';
 
-final NotificationService notificationService = NotificationService();
-final CloudSyncService cloudSync = CloudSyncService();
-const String kDefaultApkUrl = 'https://example.com/siagakota/app-latest.apk';
+final notificationService = NotificationService();
+final cloudSync = CloudSyncService();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -51,345 +49,6 @@ Future<void> main() async {
       child: const SiagaKotaApp(),
     ),
   );
-}
-
-class CloudSyncService {
-  final bool enable = true; // set false untuk mematikan cloud sync.
-  late SupabaseClient _supabase;
-  bool _ready = false;
-  PackageInfo? _packageInfo;
-
-  bool get isReady => _ready;
-
-  Future<void> init() async {
-    if (!enable) return;
-    try {
-      _supabase = Supabase.instance.client;
-      _ready = true;
-    } catch (_) {
-      _ready = false;
-    }
-  }
-
-  void setPackageInfo(PackageInfo info) {
-    _packageInfo = info;
-  }
-
-  Stream<List<Report>> listenReports() {
-    if (!isReady) return const Stream.empty();
-    return _supabase.from('reports').stream(primaryKey: ['id']).map(
-        (snap) => snap.map((d) => Report.fromJson(d)).toList());
-  }
-
-  Future<List<Report>> fetchReports() async {
-    if (!isReady) return [];
-    try {
-      final List<dynamic> data = await _supabase.from('reports').select();
-      return data.map((d) => Report.fromJson(d)).toList();
-    } catch (_) {
-      return [];
-    }
-  }
-
-  Future<void> upsertReport(Report report) async {
-    if (!isReady) return;
-    await _supabase.from('reports').upsert(report.toJson());
-  }
-
-  Future<void> deleteReport(String id) async {
-    if (!isReady) return;
-    await _supabase.from('reports').delete().eq('id', id);
-  }
-
-  Future<AppUpdateInfo?> fetchUpdateInfo() async {
-    if (!isReady || _packageInfo == null) return null;
-    try {
-      final response =
-          await _supabase.from('meta').select().eq('id', 'app').single();
-
-      if (response.isEmpty) return null;
-      final latest = response['latestVersion'] as String?;
-      final note = response['note'] as String?;
-      final apkUrl = response['apkUrl'] as String?;
-      final force = response['forceUpdate'] as bool? ?? false;
-      if (latest == null) return null;
-      final needsUpdate = _isNewer(latest, _packageInfo!.version);
-      if (!needsUpdate) return null;
-      return AppUpdateInfo(
-        latestVersion: latest,
-        note: note ?? 'Versi $latest tersedia. Silakan perbarui aplikasi.',
-        force: force,
-        apkUrl: apkUrl ?? kDefaultApkUrl,
-      );
-    } catch (_) {
-      return null;
-    }
-  }
-
-  bool _isNewer(String latest, String current) {
-    List<int> parse(String v) =>
-        v.split('.').map((e) => int.tryParse(e) ?? 0).toList();
-    final l = parse(latest);
-    final c = parse(current);
-    final len = l.length > c.length ? l.length : c.length;
-    for (var i = 0; i < len; i++) {
-      final li = i < l.length ? l[i] : 0;
-      final ci = i < c.length ? c[i] : 0;
-      if (li > ci) return true;
-      if (li < ci) return false;
-    }
-    return false;
-  }
-}
-
-class AppUpdateInfo {
-  final String latestVersion;
-  final String note;
-  final bool force;
-  final String apkUrl;
-
-  const AppUpdateInfo({
-    required this.latestVersion,
-    required this.note,
-    required this.force,
-    required this.apkUrl,
-  });
-}
-
-/// Representasi user yang disimpan di Supabase.
-class UserProfile {
-  final String id;
-  final String nama;
-  final String role;
-  final DateTime createdAt;
-
-  const UserProfile({
-    required this.id,
-    required this.nama,
-    required this.role,
-    required this.createdAt,
-  });
-}
-
-/// Layanan khusus untuk operasi Supabase terkait user.
-class UserService {
-  final SupabaseClient _supabase;
-  UserService({SupabaseClient? supabase})
-      : _supabase = supabase ?? Supabase.instance.client;
-
-  Future<UserProfile> createUser(
-      {required String name, String role = 'user'}) async {
-    final now = DateTime.now();
-    try {
-      final response = await _supabase
-          .from('users')
-          .insert({
-            'nama': name,
-            'role': role,
-            'created_at': now.toIso8601String(),
-          })
-          .select()
-          .single();
-
-      return UserProfile(
-        id: response['id'] as String,
-        nama: response['nama'] as String,
-        role: response['role'] as String,
-        createdAt: DateTime.parse(response['created_at'] as String),
-      );
-    } catch (_) {
-      return UserProfile(
-        id: const Uuid().v4(),
-        nama: name,
-        role: role,
-        createdAt: now,
-      );
-    }
-  }
-
-  Future<UserProfile?> getUser(String id) async {
-    try {
-      final response =
-          await _supabase.from('users').select().eq('id', id).single();
-
-      return UserProfile(
-        id: response['id'] as String,
-        nama: response['nama'] as String? ?? '-',
-        role: response['role'] as String? ?? 'user',
-        createdAt: DateTime.parse(response['created_at'] as String? ??
-            DateTime.now().toIso8601String()),
-      );
-    } catch (_) {
-      return null;
-    }
-  }
-}
-
-/// Menyimpan sesi login di SharedPreferences (ID & nama user).
-class UserSessionManager {
-  static const _keyUserId = 'session_user_id';
-  static const _keyUserName = 'session_user_name';
-  static const _keyAccounts = 'accountsV2'; // format: name::id
-
-  Future<void> saveSession(UserProfile user) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_keyUserId, user.id);
-    await prefs.setString(_keyUserName, user.nama);
-  }
-
-  Future<void> saveSessionRaw(
-      {required String id, required String name}) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_keyUserId, id);
-    await prefs.setString(_keyUserName, name);
-  }
-
-  Future<Map<String, String>> loadAccounts() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getStringList(_keyAccounts) ?? [];
-    final map = <String, String>{};
-    for (final entry in raw) {
-      final parts = entry.split('::');
-      if (parts.length == 2) {
-        map[parts[0]] = parts[1];
-      }
-    }
-    return map;
-  }
-
-  Future<void> saveAccounts(Map<String, String> accounts) async {
-    final prefs = await SharedPreferences.getInstance();
-    final list = accounts.entries.map((e) => '${e.key}::${e.value}').toList();
-    await prefs.setStringList(_keyAccounts, list);
-  }
-
-  Future<(String?, String?)> loadSession() async {
-    final prefs = await SharedPreferences.getInstance();
-    return (prefs.getString(_keyUserId), prefs.getString(_keyUserName));
-  }
-
-  Future<void> clearSession() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_keyUserId);
-    await prefs.remove(_keyUserName);
-  }
-}
-
-class AuthController extends ChangeNotifier {
-  final _userService = UserService();
-  final _session = UserSessionManager();
-  Map<String, String> _accountIds = {}; // name -> userId
-  String? _userId;
-  String? _userName;
-  bool _ready = false;
-  bool _isAdmin = false;
-  String? _adminKecamatan;
-
-  String? get userId => _userId;
-  String? get userName => _userName;
-  List<String> get accounts => List.unmodifiable(_accountIds.keys);
-  bool get isReady => _ready;
-  bool get isLoggedIn => _userId != null;
-  bool get isAdmin => _isAdmin;
-  String? get adminKecamatan => _adminKecamatan;
-
-  AuthController() {
-    _load();
-  }
-
-  Future<void> _load() async {
-    try {
-      _accountIds = await _session.loadAccounts();
-      final session = await _session.loadSession();
-      _userId = session.$1;
-      _userName = session.$2;
-    } catch (e) {
-      // Jika gagal baca prefs, tetap lanjut dengan data kosong agar UI tidak hang.
-      _accountIds = {};
-      _userId = null;
-      _userName = null;
-    } finally {
-      _ready = true;
-      notifyListeners();
-    }
-  }
-
-  Future<void> _persistAccounts() async {
-    try {
-      await _session.saveAccounts(_accountIds);
-    } catch (_) {}
-  }
-
-  Future<void> createAccount(String name) async {
-    final clean = name.trim();
-    if (clean.isEmpty) return;
-    final user = await _userService.createUser(name: clean);
-    _userId = user.id;
-    _userName = user.nama;
-    _accountIds[user.nama] = user.id;
-    await _persistAccounts();
-    await _session.saveSession(user);
-    notifyListeners();
-  }
-
-  Future<void> loginWithExisting(String name) async {
-    final id = _accountIds[name];
-    if (id == null) return;
-    _userId = id;
-    _userName = name;
-    await _session.saveSessionRaw(id: id, name: name);
-    notifyListeners();
-  }
-
-  Future<bool> loginAsAdmin({
-    required String password,
-    required String kecamatan,
-  }) async {
-    const adminPassword = 'admin123';
-    if (password.trim() != adminPassword) return false;
-    _adminKecamatan = kecamatan;
-    _isAdmin = true;
-    _userName = 'Admin';
-    _userId = 'admin';
-    await _session.saveSessionRaw(id: _userId!, name: _userName!);
-    notifyListeners();
-    return true;
-  }
-
-  void logout() {
-    _userName = null;
-    _userId = null;
-    _isAdmin = false;
-    _adminKecamatan = null;
-    _session.clearSession();
-    notifyListeners();
-  }
-}
-
-class NotificationService {
-  final _plugin = FlutterLocalNotificationsPlugin();
-  bool _initialized = false;
-
-  Future<void> init() async {
-    if (kIsWeb || _initialized) return;
-    const android = AndroidInitializationSettings('@mipmap/ic_launcher');
-    const settings = InitializationSettings(android: android);
-    await _plugin.initialize(settings);
-    _initialized = true;
-  }
-
-  Future<void> showStatusChange(String title, String body) async {
-    if (kIsWeb || !_initialized) return;
-    const androidDetails = AndroidNotificationDetails(
-      'status_channel',
-      'Status Laporan',
-      channelDescription: 'Notifikasi perubahan status laporan',
-      importance: Importance.high,
-      priority: Priority.high,
-    );
-    const notifDetails = NotificationDetails(android: androidDetails);
-    await _plugin.show(DateTime.now().millisecond, title, body, notifDetails);
-  }
 }
 
 class SiagaKotaApp extends StatelessWidget {
@@ -468,494 +127,6 @@ class AuthGate extends StatelessWidget {
       },
     );
   }
-}
-
-enum ReportStatus { diterima, proses, selesai }
-
-enum ExportFormat { csv, pdf, doc, print }
-
-const List<String> kecamatanPalembang = [
-  'SEMUA WILAYAH',
-  'Alang-Alang Lebar',
-  'Bukit Kecil',
-  'Gandus',
-  'Ilir Barat I',
-  'Ilir Barat II',
-  'Ilir Timur I',
-  'Ilir Timur II',
-  'Ilir Timur III',
-  'Jakabaring',
-  'Kalidoni',
-  'Kemuning',
-  'Kertapati',
-  'Plaju',
-  'Sako',
-  'Seberang Ulu I',
-  'Seberang Ulu II',
-  'Sematang Borang',
-  'Sukarami',
-];
-
-extension ReportStatusText on ReportStatus {
-  String get label {
-    switch (this) {
-      case ReportStatus.diterima:
-        return 'Diterima';
-      case ReportStatus.proses:
-        return 'Proses';
-      case ReportStatus.selesai:
-        return 'Selesai';
-    }
-  }
-
-  Color get color {
-    switch (this) {
-      case ReportStatus.diterima:
-        return AppTheme.warning;
-      case ReportStatus.proses:
-        return AppTheme.info;
-      case ReportStatus.selesai:
-        return AppTheme.success;
-    }
-  }
-}
-
-class Hotspot {
-  final double latitude;
-  final double longitude;
-  final int count;
-  final double averageSeverity;
-
-  const Hotspot({
-    required this.latitude,
-    required this.longitude,
-    required this.count,
-    required this.averageSeverity,
-  });
-}
-
-class Report {
-  final String id;
-  final String nama;
-  final String jenis;
-  final String deskripsi;
-  final double latitude;
-  final double longitude;
-  final double severity; // 1..5
-  final String kecamatan;
-  final String? fotoPath;
-  final Uint8List? fotoBytes;
-  final double? accuracyMeters;
-  final DateTime createdAt;
-  final String owner; // nama akun yang membuat
-  ReportStatus status;
-  int votes;
-  String? duplicateOf;
-  double weatherRisk;
-
-  Report({
-    required this.id,
-    required this.nama,
-    required this.jenis,
-    required this.deskripsi,
-    required this.latitude,
-    required this.longitude,
-    required this.severity,
-    required this.kecamatan,
-    required this.fotoPath,
-    required this.fotoBytes,
-    required this.accuracyMeters,
-    required this.createdAt,
-    required this.owner,
-    this.status = ReportStatus.diterima,
-    this.votes = 0,
-    this.duplicateOf,
-    this.weatherRisk = 0,
-  });
-
-  double get priorityScore => severity * 2 + votes + weatherRisk;
-
-  Map<String, dynamic> toJson() => {
-        'id': id,
-        'nama': nama,
-        'jenis': jenis,
-        'deskripsi': deskripsi,
-        'latitude': latitude,
-        'longitude': longitude,
-        'severity': severity,
-        'kecamatan': kecamatan,
-        'fotoPath': fotoPath,
-        'fotoBytes': fotoBytes != null ? base64Encode(fotoBytes!) : null,
-        'accuracyMeters': accuracyMeters,
-        'createdAt': createdAt.toIso8601String(),
-        'status': status.name,
-        'votes': votes,
-        'duplicateOf': duplicateOf,
-        'weatherRisk': weatherRisk,
-        'owner': owner,
-      };
-
-  factory Report.fromJson(Map<String, dynamic> json) => Report(
-        id: json['id'] as String,
-        nama: json['nama'] as String? ?? '-',
-        jenis: json['jenis'] as String? ?? 'Banjir',
-        deskripsi: json['deskripsi'] as String? ?? '',
-        latitude: (json['latitude'] as num).toDouble(),
-        longitude: (json['longitude'] as num).toDouble(),
-        severity: (json['severity'] as num).toDouble(),
-        kecamatan: json['kecamatan'] as String? ?? kecamatanPalembang.first,
-        fotoPath: json['fotoPath'] as String?,
-        fotoBytes: json['fotoBytes'] != null
-            ? base64Decode(json['fotoBytes'] as String)
-            : null,
-        accuracyMeters: (json['accuracyMeters'] as num?)?.toDouble(),
-        createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
-            DateTime.now(),
-        status: ReportStatus.values.firstWhere((e) => e.name == json['status'],
-            orElse: () => ReportStatus.diterima),
-        votes: json['votes'] as int? ?? 0,
-        duplicateOf: json['duplicateOf'] as String?,
-        weatherRisk: (json['weatherRisk'] as num?)?.toDouble() ?? 0,
-        owner: json['owner'] as String? ?? '-',
-      );
-}
-
-class ReportDraft {
-  final String nama;
-  final String jenis;
-  final String deskripsi;
-  final double severity;
-  final String kecamatan;
-  final String? fotoPath;
-  final String? fotoBase64;
-
-  ReportDraft({
-    required this.nama,
-    required this.jenis,
-    required this.deskripsi,
-    required this.severity,
-    required this.kecamatan,
-    this.fotoPath,
-    this.fotoBase64,
-  });
-
-  Map<String, dynamic> toJson() => {
-        'nama': nama,
-        'jenis': jenis,
-        'deskripsi': deskripsi,
-        'severity': severity,
-        'kecamatan': kecamatan,
-        'fotoPath': fotoPath,
-        'fotoBase64': fotoBase64,
-      };
-
-  factory ReportDraft.fromJson(Map<String, dynamic> json) => ReportDraft(
-        nama: json['nama'] as String,
-        jenis: json['jenis'] as String? ?? 'Banjir',
-        deskripsi: json['deskripsi'] as String? ?? '',
-        severity: (json['severity'] as num?)?.toDouble() ?? 3,
-        kecamatan: json['kecamatan'] as String? ?? kecamatanPalembang.first,
-        fotoPath: json['fotoPath'] as String?,
-        fotoBase64: json['fotoBase64'] as String?,
-      );
-}
-
-class ReportController extends ChangeNotifier {
-  final CloudSyncService? cloud;
-  final List<Report> _reports = [];
-  final _uuid = const Uuid();
-  final List<Report> _sortedCache = [];
-  bool _sortedDirty = true;
-  final List<ReportDraft> _drafts = [];
-  bool _draftLoaded = false;
-  bool _reportsLoaded = false;
-  StreamSubscription<List<Report>>? _cloudSub;
-
-  ReportController({this.cloud}) {
-    loadDrafts();
-    loadReports();
-    _fetchInitialFromCloud();
-    _attachCloud();
-  }
-
-  Future<void> _fetchInitialFromCloud() async {
-    if (cloud == null) return;
-    // Tunggu sebentar agar isReady benar-benar siap (init async).
-    await Future.delayed(const Duration(milliseconds: 500));
-    final data = await cloud!.fetchReports();
-    if (data.isNotEmpty) {
-      replaceFromCloud(data);
-    }
-  }
-
-  @override
-  void dispose() {
-    _cloudSub?.cancel();
-    super.dispose();
-  }
-
-  List<Report> get reports => List.unmodifiable(_reports);
-  List<ReportDraft> get drafts => List.unmodifiable(_drafts);
-  List<Report> get sortedReports {
-    if (_sortedDirty) {
-      _sortedCache
-        ..clear()
-        ..addAll(_reports)
-        ..sort((a, b) => b.priorityScore.compareTo(a.priorityScore));
-      _sortedDirty = false;
-    }
-    return List.unmodifiable(_sortedCache);
-  }
-
-  Future<void> addReport({
-    required String nama,
-    required String jenis,
-    required String deskripsi,
-    required double severity,
-    required String kecamatan,
-    required String owner,
-    required Position position,
-    String? fotoPath,
-    Uint8List? fotoBytes,
-  }) async {
-    final newReport = Report(
-      id: _uuid.v4(),
-      nama: nama,
-      jenis: jenis,
-      deskripsi: deskripsi,
-      latitude: position.latitude,
-      longitude: position.longitude,
-      severity: severity,
-      kecamatan: kecamatan,
-      fotoPath: fotoPath,
-      fotoBytes: fotoBytes,
-      accuracyMeters: position.accuracy.isFinite ? position.accuracy : null,
-      createdAt: DateTime.now(),
-      owner: owner,
-      weatherRisk: _mockWeatherRisk(position.latitude, position.longitude),
-    );
-    final duplicate = _findDuplicate(newReport);
-    if (duplicate != null) {
-      newReport.duplicateOf = duplicate.id;
-      duplicate.votes += 1;
-    }
-
-    _reports.insert(0, newReport);
-    _sortedDirty = true;
-    await _persistReports();
-    _syncUp(newReport);
-    notifyListeners();
-  }
-
-  Future<void> addDraft(ReportDraft draft) async {
-    _drafts.insert(0, draft);
-    await _persistDrafts();
-    notifyListeners();
-  }
-
-  Future<void> removeDraft(ReportDraft draft) async {
-    _drafts.remove(draft);
-    await _persistDrafts();
-    notifyListeners();
-  }
-
-  Future<void> _persistDrafts() async {
-    final prefs = await SharedPreferences.getInstance();
-    final list = _drafts.map((d) => d.toJson()).toList();
-    prefs.setString('drafts', jsonEncode(list));
-  }
-
-  Future<void> loadDrafts() async {
-    if (_draftLoaded) return;
-    _draftLoaded = true;
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString('drafts');
-    if (raw == null) return;
-    try {
-      final list = (jsonDecode(raw) as List)
-          .map((e) => ReportDraft.fromJson(Map<String, dynamic>.from(e)))
-          .toList();
-      _drafts
-        ..clear()
-        ..addAll(list);
-      notifyListeners();
-    } catch (_) {
-      // ignore corrupt drafts
-    }
-  }
-
-  void upvote(String id) {
-    final idx = _reports.indexWhere((r) => r.id == id);
-    if (idx == -1) return;
-    _reports[idx].votes += 1;
-    _sortedDirty = true;
-    _persistReports();
-    _syncUp(_reports[idx]);
-    notifyListeners();
-  }
-
-  void updateStatus(String id, ReportStatus status) {
-    final idx = _reports.indexWhere((r) => r.id == id);
-    if (idx == -1) return;
-    _reports[idx].status = status;
-    _sortedDirty = true;
-    notificationService.showStatusChange(
-      'Status laporan berubah',
-      '${_reports[idx].jenis} kini ${status.label}',
-    );
-    _persistReports();
-    _syncUp(_reports[idx]);
-    notifyListeners();
-  }
-
-  Future<bool> deleteReport({
-    required String id,
-    required bool isAdmin,
-    required String? requester,
-  }) async {
-    final idx = _reports.indexWhere((r) => r.id == id);
-    if (idx == -1) return false;
-
-    final report = _reports[idx];
-    if (!isAdmin && report.owner != requester) {
-      return false;
-    }
-
-    _reports.removeAt(idx);
-    _sortedDirty = true;
-    await _persistReports();
-    await cloud?.deleteReport(id);
-    notifyListeners();
-    return true;
-  }
-
-  Report? _findDuplicate(Report incoming) {
-    const radiusMeters = 200.0;
-    const timeWindow = Duration(hours: 2);
-    for (final r in _reports) {
-      final sameType = r.jenis == incoming.jenis;
-      final closeBy = Geolocator.distanceBetween(
-            r.latitude,
-            r.longitude,
-            incoming.latitude,
-            incoming.longitude,
-          ) <=
-          radiusMeters;
-      final recent =
-          incoming.createdAt.difference(r.createdAt).abs() <= timeWindow;
-      if (sameType && closeBy && recent) {
-        return r;
-      }
-    }
-    return null;
-  }
-
-  double _mockWeatherRisk(double lat, double lng) {
-    return 0.5;
-  }
-
-  Future<void> _persistReports() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final list = _reports.map((r) => r.toJson()).toList();
-      await prefs.setString('reports', jsonEncode(list));
-    } catch (_) {
-      // abaikan kegagalan simpan
-    }
-  }
-
-  Future<void> loadReports() async {
-    if (_reportsLoaded) return;
-    _reportsLoaded = true;
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final raw = prefs.getString('reports');
-      if (raw == null) return;
-      final list = (jsonDecode(raw) as List)
-          .map((e) => Report.fromJson(Map<String, dynamic>.from(e)))
-          .toList();
-      _reports
-        ..clear()
-        ..addAll(list);
-      _sortedDirty = true;
-      notifyListeners();
-    } catch (_) {
-      // abaikan jika gagal parse
-    }
-  }
-
-  void replaceFromCloud(List<Report> incoming) {
-    _reports
-      ..clear()
-      ..addAll(incoming);
-    _sortedDirty = true;
-    _persistReports();
-    notifyListeners();
-  }
-
-  void _attachCloud() {
-    if (cloud == null || !cloud!.isReady) return;
-    _cloudSub = cloud!.listenReports().listen((data) {
-      if (data.isEmpty && _reports.isNotEmpty) {
-        // Seed cloud with existing local data.
-        for (final r in _reports) {
-          _syncUp(r);
-        }
-        return;
-      }
-      replaceFromCloud(data);
-    });
-  }
-
-  void _syncUp(Report report) {
-    cloud?.upsertReport(report);
-  }
-
-  List<Hotspot> computeHotspots({
-    int minCount = 3,
-    List<Report>? source,
-  }) {
-    final data = source ?? _reports;
-    if (data.isEmpty) return const [];
-    final buckets = <String, _HotBucket>{};
-    for (final r in data) {
-      final key = _bucketKey(r.latitude, r.longitude);
-      final bucket = buckets.putIfAbsent(key, () => _HotBucket());
-      bucket.count += 1;
-      bucket.latSum += r.latitude;
-      bucket.lngSum += r.longitude;
-      bucket.severitySum += r.severity;
-    }
-    final result = <Hotspot>[];
-    for (final entry in buckets.entries) {
-      final b = entry.value;
-      if (b.count < minCount) continue;
-      result.add(
-        Hotspot(
-          latitude: b.latSum / b.count,
-          longitude: b.lngSum / b.count,
-          count: b.count,
-          averageSeverity: b.severitySum / b.count,
-        ),
-      );
-    }
-    result.sort((a, b) => b.count.compareTo(a.count));
-    return result;
-  }
-
-  String _bucketKey(double lat, double lng) {
-    // Grid kasar ~1 km (0.01 derajat) untuk penanda rawan.
-    final latKey = (lat * 100).round();
-    final lngKey = (lng * 100).round();
-    return '$latKey:$lngKey';
-  }
-}
-
-class _HotBucket {
-  int count = 0;
-  double latSum = 0;
-  double lngSum = 0;
-  double severitySum = 0;
 }
 
 class HomeShell extends StatefulWidget {
@@ -2230,7 +1401,7 @@ class ReportCard extends StatelessWidget {
                 ),
               ],
             ),
-            if (report.fotoBytes != null || report.fotoPath != null) ...[
+            if (report.photoUrl != null || report.fotoBytes != null || report.fotoPath != null) ...[
               const SizedBox(height: 10),
               ClipRRect(
                 borderRadius: BorderRadius.circular(20),
@@ -2238,24 +1409,45 @@ class ReportCard extends StatelessWidget {
                   decoration: BoxDecoration(
                     border: Border.all(color: const Color(0xFFF1F5F9)),
                   ),
-                  child: report.fotoBytes != null
-                      ? Image.memory(
-                          report.fotoBytes!,
+                  child: report.photoUrl != null
+                      ? Image.network(
+                          report.photoUrl!,
                           height: 220,
                           width: double.infinity,
                           fit: BoxFit.cover,
                           errorBuilder: (context, error, stack) => _imageError(),
+                          loadingBuilder: (context, child, loadingProgress) {
+                            if (loadingProgress == null) return child;
+                            return Container(
+                              height: 220,
+                              width: double.infinity,
+                              color: Colors.grey[300],
+                              child: const Center(
+                                child: CircularProgressIndicator(),
+                              ),
+                            );
+                          },
                         )
-                      : Image.file(
-                          File(report.fotoPath!),
-                          height: 220,
-                          width: double.infinity,
-                          cacheHeight: 1080,
-                          cacheWidth: 1920,
-                          filterQuality: FilterQuality.high,
-                          fit: BoxFit.cover,
-                          errorBuilder: (context, error, stack) => _imageError(),
-                        ),
+                      : report.fotoBytes != null
+                          ? Image.memory(
+                              report.fotoBytes!,
+                              height: 220,
+                              width: double.infinity,
+                              fit: BoxFit.cover,
+                              errorBuilder: (context, error, stack) =>
+                                  _imageError(),
+                            )
+                          : Image.file(
+                              File(report.fotoPath!),
+                              height: 220,
+                              width: double.infinity,
+                              cacheHeight: 1080,
+                              cacheWidth: 1920,
+                              filterQuality: FilterQuality.high,
+                              fit: BoxFit.cover,
+                              errorBuilder: (context, error, stack) =>
+                                  _imageError(),
+                            ),
                 ),
               ),
             ],
