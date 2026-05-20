@@ -1,4 +1,5 @@
 import 'dart:io' show File, Platform;
+import 'dart:convert';
 import 'dart:async';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:google_generative_ai/google_generative_ai.dart';
@@ -2825,7 +2826,7 @@ class MapView extends StatelessWidget {
               ),
               const SizedBox(width: 8),
               ElevatedButton.icon(
-                onPressed: () => _openNearestNavigation(),
+                onPressed: () => _openNearestNavigation(context),
                 icon: const Icon(Icons.directions),
                 label: const Text('Arahkan ke laporan terdekat'),
               ),
@@ -2881,16 +2882,36 @@ class MapView extends StatelessWidget {
     );
   }
 
-  void _openNearestNavigation() async {
-    if (currentPosition == null || reports.isEmpty) return;
+  void _openNearestNavigation(BuildContext context) async {
+    if (currentPosition == null || reports.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Lokasi atau laporan belum tersedia. Coba segarkan lokasi terlebih dahulu.'),
+        ),
+      );
+      return;
+    }
     final nearest = _nearestReport();
     final lat = nearest.latitude;
     final lng = nearest.longitude;
     final uri = Uri.parse(
       'https://www.google.com/maps/dir/?api=1&destination=$lat,$lng&travelmode=driving',
     );
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    try {
+      final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!launched && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Tidak dapat membuka Google Maps. Pastikan aplikasi browser atau Google Maps terinstall.'),
+          ),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Gagal membuka navigasi: $e')),
+        );
+      }
     }
   }
 
