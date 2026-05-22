@@ -31,7 +31,6 @@ dependencies:
 
   http: ^1.2.1
   speech_to_text: ^7.3.0
-  google_generative_ai: ^0.4.7
 
 dev_dependencies:
   flutter_test:

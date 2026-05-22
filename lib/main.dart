@@ -2,7 +2,7 @@ import 'dart:io' show File, Platform;
 import 'dart:convert';
 import 'dart:async';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
-import 'package:google_generative_ai/google_generative_ai.dart';
+import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
@@ -445,7 +445,7 @@ class _SiagaBotWidgetState extends State<SiagaBotWidget> {
   final _inputCtrl = TextEditingController();
   bool _loading = false;
   final List<Map<String, String>> _messages = [
-    {'role': 'ai', 'text': 'Halo! Saya SiagaBot 🤖. Asisten virtual cerdas Kota Palembang. Ada yang bisa saya bantu hari ini?'},
+    {'role': 'ai', 'text': 'Halo! Saya Asisten Laporan Warga 🤖. Ada yang bisa saya bantu terkait informasi laporan infrastruktur atau kondisi kota hari ini?'},
   ];
   final _scrollCtrl = ScrollController();
 
@@ -465,8 +465,14 @@ class _SiagaBotWidgetState extends State<SiagaBotWidget> {
       _loading = true;
     });
     _scrollToBottom();
-    final prompt = 'Anda SiagaBot, asisten virtual SiagaKota Palembang. Jawab ramah & singkat dalam bahasa Indonesia: "$text"';
-    final reply = await _callGemini(prompt);
+    
+    // Ambil data laporan dari ReportController sebagai context (pengganti tools query database)
+    final reportCtrl = context.read<ReportController>();
+    final reportsContext = reportCtrl.reports.map((r) => 
+      "- Jenis: ${r.jenis}, Waktu: ${DateFormat('dd MMM HH:mm').format(r.createdAt)}, Lokasi: ${r.kecamatan} (${r.latitude.toStringAsFixed(4)}, ${r.longitude.toStringAsFixed(4)}), Status: ${r.status.label}, Detail: ${r.deskripsi}"
+    ).join('\n');
+
+    final reply = await _callLlama(text, reportsContext);
     if (mounted) {
       setState(() {
         _messages.add({'role': 'ai', 'text': reply ?? 'Maaf, tidak bisa memproses permintaan.'});
@@ -484,21 +490,66 @@ class _SiagaBotWidgetState extends State<SiagaBotWidget> {
     });
   }
 
-  Future<String?> _callGemini(String prompt) async {
-    final apiKey = const String.fromEnvironment('GEMINI_API_KEY', defaultValue: 'YOUR_GEMINI_API_KEY');
+  Future<String?> _callLlama(String userMessage, String reportsContext) async {
+    final apiKey = const String.fromEnvironment('LLAMA_API_KEY', defaultValue: 'YOUR_LLAMA_API_KEY');
+    final apiUrl = const String.fromEnvironment('LLAMA_API_URL', defaultValue: 'https://api.openrouter.ai/api/v1/chat/completions');
     
-    if (apiKey == 'YOUR_GEMINI_API_KEY' || apiKey.isEmpty) {
+    if (apiKey == 'YOUR_LLAMA_API_KEY' || apiKey.isEmpty) {
        await Future.delayed(const Duration(seconds: 1));
-       if (prompt.toLowerCase().contains("hujan")) {
+       if (userMessage.toLowerCase().contains("hujan")) {
            return "Sepertinya akan turun hujan hari ini. Harap siapkan payung dan berhati-hati di jalan ya!";
        }
-       return "Maaf, saya SiagaBot versi simulasi karena API Key belum dikonfigurasi. Saya siap membantu Anda jika API Key sudah dimasukkan!";
+       return "Maaf, saya Asisten Laporan Warga versi simulasi karena API Key Llama belum dikonfigurasi. Saya siap membantu Anda jika API Key sudah dimasukkan!";
     }
 
     try {
-      final model = GenerativeModel(model: 'gemini-1.5-flash-latest', apiKey: apiKey);
-      final response = await model.generateContent([Content.text(prompt)]);
-      return response.text;
+      final systemInstruction = '''Anda adalah "Asisten Laporan Warga", bot AI resmi untuk aplikasi pelaporan banjir dan kerusakan infrastruktur. 
+Tugas utama Anda adalah memberikan informasi yang akurat dan *real-time* kepada pengguna berdasarkan laporan yang ada di database sistem.
+
+PANDUAN UTAMA & BATASAN (SANGAT PENTING):
+1. SUMBER KEBENARAN TUNGGAL: Anda TIDAK BOLEH mengarang, menebak, atau memprediksi kejadian banjir, cuaca, atau kerusakan infrastruktur. Anda HANYA boleh menjawab berdasarkan data laporan yang diberikan pada konteks.
+2. ANTI-HALUSINASI: Jika data mengembalikan hasil kosong (tidak ada laporan relevan), Anda harus menjawab bahwa tidak ada laporan yang masuk. (Contoh: "Berdasarkan data kami, saat ini tidak ada laporan banjir di [Lokasi] untuk hari ini.").
+3. JANGAN MENJAMIN KESELAMATAN: Jika tidak ada laporan, jangan pernah menyatakan bahwa area tersebut "100% aman". Cukup nyatakan bahwa "tidak ada laporan yang tercatat di sistem".
+4. FORMAT JAWABAN (JIKA ADA DATA): Jika data ditemukan, berikan informasi secara ringkas dan terstruktur. Wajib mencakup:
+   - Jenis Kejadian (Banjir/Jalan Rusak/dll)
+   - Lokasi Spesifik
+   - Waktu Laporan Masuk
+   - Detail/Status (misal: "tinggi air 50cm" atau "sedang ditangani")
+5. NADA BICARA: Profesional, sopan, empati, dan efisien. Jangan gunakan kalimat berbunga-bunga. Pengguna mungkin dalam kondisi darurat, jadi berikan jawaban yang langsung pada intinya.
+
+ALUR KERJA:
+- Saat pengguna bertanya, segera identifikasi parameter (kategori kejadian, lokasi, tanggal/waktu).
+- Cocokkan dengan "Data Laporan Saat Ini" yang dilampirkan bersama pertanyaan.
+- Terjemahkan data mentah dari konteks menjadi kalimat natural yang mudah dibaca pengguna.''';
+
+      final promptContext = '''Data Laporan Saat Ini:
+${reportsContext.isEmpty ? "Tidak ada laporan aktif di sistem." : reportsContext}
+
+Pertanyaan Pengguna: "$userMessage"''';
+
+      final response = await http.post(
+        Uri.parse(apiUrl),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $apiKey',
+        },
+        body: jsonEncode({
+          'model': 'meta-llama/llama-4-scout-17b-16e-instruct',
+          'temperature': 0.7,
+          'max_tokens': 800,
+          'messages': [
+            {'role': 'system', 'content': systemInstruction},
+            {'role': 'user', 'content': promptContext},
+          ],
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return data['choices'][0]['message']['content'];
+      } else {
+        return 'Maaf, terjadi kesalahan dari server AI. Code: ${response.statusCode}';
+      }
     } catch (e) {
       return 'Maaf, terjadi kesalahan koneksi AI: $e';
     }
@@ -539,8 +590,8 @@ class _SiagaBotWidgetState extends State<SiagaBotWidget> {
                       ),
                       const SizedBox(width: 10),
                       const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        Text('SiagaBot AI', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 14)),
-                        Text('Asisten Kota 24/7', style: TextStyle(color: Color(0xFF94A3B8), fontSize: 10)),
+                        Text('Asisten Laporan Warga', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 14)),
+                        Text('Pemantauan Real-Time', style: TextStyle(color: Color(0xFF94A3B8), fontSize: 10)),
                       ])),
                       GestureDetector(
                         onTap: () => setState(() => _isOpen = false),
@@ -3306,8 +3357,9 @@ class _ReportFormPageState extends State<ReportFormPage> {
     setState(() => _analyzingImage = true);
     
     try {
-      final apiKey = const String.fromEnvironment('GEMINI_API_KEY', defaultValue: 'YOUR_GEMINI_API_KEY');
-      if (apiKey == 'YOUR_GEMINI_API_KEY' || apiKey.isEmpty) {
+      final apiKey = const String.fromEnvironment('LLAMA_API_KEY', defaultValue: 'YOUR_LLAMA_API_KEY');
+      final apiUrl = const String.fromEnvironment('LLAMA_API_URL', defaultValue: 'https://api.openrouter.ai/api/v1/chat/completions');
+      if (apiKey == 'YOUR_LLAMA_API_KEY' || apiKey.isEmpty) {
         await Future.delayed(const Duration(seconds: 2));
         setState(() {
           deskripsiController.text = 'Terdapat kerusakan infrastruktur yang cukup parah berdasarkan foto. (Hasil Simulasi Vision AI)';
@@ -3315,25 +3367,45 @@ class _ReportFormPageState extends State<ReportFormPage> {
           severity = 4;
         });
       } else {
-        final model = GenerativeModel(model: 'gemini-1.5-flash-latest', apiKey: apiKey);
-        
         Uint8List imageBytes;
         if (fotoBytes != null) {
           imageBytes = fotoBytes!;
         } else {
           imageBytes = await File(fotoPath!).readAsBytes();
         }
+        final base64Image = base64Encode(imageBytes);
 
-        final prompt = TextPart("Analisis foto ini untuk laporan masalah kota. Tentukan 3 hal: 1. Jenis laporan (Banjir, Infrastruktur Rusak, atau Pohon Tumbang), 2. Tingkat keparahan (angka 1 sampai 5), 3. Deskripsi singkat masalah yang terlihat. Format jawaban: 'Jenis: [jenis]\nKeparahan: [angka]\nDeskripsi: [deskripsi]'");
-        final imagePart = DataPart('image/jpeg', imageBytes);
+        final promptText = "Analisis foto ini untuk laporan masalah kota. Tentukan 3 hal: 1. Jenis laporan (Banjir, Infrastruktur Rusak, atau Pohon Tumbang), 2. Tingkat keparahan (angka 1 sampai 5), 3. Deskripsi singkat masalah yang terlihat. Format jawaban: 'Jenis: [jenis]\\nKeparahan: [angka]\\nDeskripsi: [deskripsi]'";
+
+        final response = await http.post(
+          Uri.parse(apiUrl),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer $apiKey',
+          },
+          body: jsonEncode({
+            'model': 'meta-llama/llama-4-scout-17b-16e-instruct',
+          'temperature': 0.3,
+          'max_tokens': 300,
+            'messages': [
+              {
+                'role': 'user',
+                'content': [
+                  {'type': 'text', 'text': promptText},
+                  {
+                    'type': 'image_url',
+                    'image_url': {'url': 'data:image/jpeg;base64,$base64Image'}
+                  }
+                ]
+              }
+            ],
+          }),
+        );
         
-        final response = await model.generateContent([
-          Content.multi([prompt, imagePart])
-        ]);
-        
-        final text = response.text ?? '';
-        
-        if (text.isNotEmpty) {
+        if (response.statusCode == 200) {
+          final data = jsonDecode(response.body);
+          final text = data['choices'][0]['message']['content'] ?? '';
+          if (text.isNotEmpty) {
           // Parse results simple
           final lines = text.split('\n');
           String newJenis = jenis;
@@ -3362,6 +3434,11 @@ class _ReportFormPageState extends State<ReportFormPage> {
               deskripsiController.text += '\n(AI Analysis): $newDesc';
             }
           });
+          }
+        } else {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Gagal menganalisis foto. Error: ${response.statusCode}')));
+          }
         }
       }
     } catch (e) {
@@ -3956,4 +4033,3 @@ class _ReportFormPageState extends State<ReportFormPage> {
     );
   }
 }
-
