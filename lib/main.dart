@@ -491,7 +491,7 @@ class _SiagaBotWidgetState extends State<SiagaBotWidget> {
   }
 
   Future<String?> _callLlama(String userMessage, String reportsContext) async {
-    final apiKey = const String.fromEnvironment('LLAMA_API_KEY', defaultValue: 'YOUR_LLAMA_API_KEY');
+    final apiKey = const String.fromEnvironment('LLAMA_API_KEY', defaultValue: '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');
     final apiUrl = const String.fromEnvironment('LLAMA_API_URL', defaultValue: 'https://api.openrouter.ai/api/v1/chat/completions');
     
     if (apiKey == 'YOUR_LLAMA_API_KEY' || apiKey.isEmpty) {
@@ -3357,7 +3357,7 @@ class _ReportFormPageState extends State<ReportFormPage> {
     setState(() => _analyzingImage = true);
     
     try {
-      final apiKey = const String.fromEnvironment('LLAMA_API_KEY', defaultValue: 'YOUR_LLAMA_API_KEY');
+      final apiKey = const String.fromEnvironment('LLAMA_API_KEY', defaultValue: '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');
       final apiUrl = const String.fromEnvironment('LLAMA_API_URL', defaultValue: 'https://api.openrouter.ai/api/v1/chat/completions');
       if (apiKey == 'YOUR_LLAMA_API_KEY' || apiKey.isEmpty) {
         await Future.delayed(const Duration(seconds: 2));
