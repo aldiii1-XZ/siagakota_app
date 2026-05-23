@@ -1164,7 +1164,7 @@ class ReportListView extends StatelessWidget {
                     .where((r) => r.kecamatan == auth.adminKecamatan)
                     .toList())
             : controller.sortedReports
-                .where((r) => r.owner == auth.userName)
+                .where((r) => r.owner == auth.userName || r.jenis == 'Pengumuman')
                 .toList();
         final drafts = controller.drafts;
 
@@ -1369,10 +1369,17 @@ class ReportCard extends StatelessWidget {
     final controller = context.read<ReportController>();
     final auth = context.watch<AuthController>();
     final formatter = DateFormat('dd MMM HH:mm');
+    
+    final isSos = report.jenis == 'Darurat SOS';
+    final isPengumuman = report.jenis == 'Pengumuman';
 
     return Card(
+      color: isSos ? const Color(0xFFFEF2F2) : (isPengumuman ? const Color(0xFFFFFBEB) : Colors.white),
       elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(24),
+        side: isSos ? const BorderSide(color: Color(0xFFFECACA), width: 2) : BorderSide.none,
+      ),
       child: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
@@ -1512,6 +1519,20 @@ class ReportCard extends StatelessWidget {
                   color: Colors.indigo,
                 ),
                 Text('${report.votes}'),
+                const SizedBox(width: 8),
+                IconButton(
+                  tooltip: 'Bagikan laporan',
+                  onPressed: () {
+                    final shareText = '🚨 [Info Warga] Laporan ${report.jenis} di ${report.kecamatan}!\n\n'
+                        'Detail: ${report.deskripsi}\n'
+                        'Lokasi: ${report.latitude.toStringAsFixed(4)}, ${report.longitude.toStringAsFixed(4)}\n\n'
+                        'Bantu upvote laporan ini di aplikasi SiagaKota agar segera ditangani!\n'
+                        'Cek detailnya di: https://siagakota.id/report/${report.id}';
+                    Share.share(shareText);
+                  },
+                  icon: const Icon(Icons.share_outlined),
+                  color: Colors.blueGrey,
+                ),
                 const Spacer(),
                 IconButton(
                   tooltip: auth.isAdmin ? 'Hapus laporan' : 'Tarik laporan',
@@ -2502,12 +2523,15 @@ class _DashboardReportTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final formatter = DateFormat('dd MMM • HH:mm');
     final urgencyColor = severityColor(report.severity);
+    final isSos = report.jenis == 'Darurat SOS';
+    final isPengumuman = report.jenis == 'Pengumuman';
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: isSos ? const Color(0xFFFEF2F2) : (isPengumuman ? const Color(0xFFFFFBEB) : Colors.white),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: isSos ? const Color(0xFFFECACA) : const Color(0xFFE2E8F0)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
