@@ -79,15 +79,6 @@ class _SplashScreenState extends State<SplashScreen> {
   @override
   void initState() {
     super.initState();
-    // Quick connectivity probe to Supabase.
-    () async {
-      try {
-        await Supabase.instance.client.from('test').insert({
-          'message': 'Supabase Connected ✅',
-          'time': DateTime.now().toIso8601String(),
-        });
-      } catch (_) {}
-    }();
     _checkUpdate();
   }
 
@@ -1063,7 +1054,7 @@ class _LoginPageState extends State<LoginPage> {
       borderRadius: BorderRadius.circular(18),
       child: InkWell(
         borderRadius: BorderRadius.circular(18),
-        onTap: () { onTap(); },
+        onTap: onTap,
         child: Ink(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           decoration: BoxDecoration(
@@ -3052,7 +3043,6 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
           if (_filter != null) {
             filtered = filtered.where((r) => r.status == _filter);
           }
-          final auth = context.read<AuthController>();
           if (auth.adminKecamatan != 'SEMUA WILAYAH' && auth.adminKecamatan != null) {
             filtered = filtered.where((r) => r.kecamatan == auth.adminKecamatan);
           }
@@ -3105,8 +3095,7 @@ class _AdminPanelPageState extends State<AdminPanelPage> {
                   ),
                 ],
               ),
-              const SizedBox(height: 8),
-              const SizedBox(height: 4),
+              const SizedBox(height: 12),
               if (filteredList.isEmpty)
                 const Padding(
                   padding: EdgeInsets.symmetric(vertical: 24),
@@ -3371,7 +3360,6 @@ class _ReportFormPageState extends State<ReportFormPage> {
   final stt.SpeechToText _speech = stt.SpeechToText();
   bool _isListening = false;
   bool _speechEnabled = false;
-  String _lastWords = '';
 
   // Vision AI state
   bool _analyzingImage = false;
@@ -3529,9 +3517,8 @@ class _ReportFormPageState extends State<ReportFormPage> {
 
   void _onSpeechResult(dynamic result) {
     setState(() {
-      _lastWords = result.recognizedWords;
       // Perbarui controller deskripsi secara real-time
-      deskripsiController.text = _lastWords;
+      deskripsiController.text = result.recognizedWords;
     });
   }
 
