@@ -482,10 +482,11 @@ class _SiagaBotWidgetState extends State<SiagaBotWidget> {
   }
 
   Future<String?> _callLlama(String userMessage, String reportsContext) async {
-    final apiKey = const String.fromEnvironment('LLAMA_API_KEY', defaultValue: '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');
-    final apiUrl = const String.fromEnvironment('LLAMA_API_URL', defaultValue: 'https://api.openrouter.ai/api/v1/chat/completions');
+    const apiKey = String.fromEnvironment('LLAMA_API_KEY', defaultValue: '');
+    const apiUrl = String.fromEnvironment('LLAMA_API_URL', defaultValue: 'https://openrouter.ai/api/v1/chat/completions');
     
-    if (apiKey == 'YOUR_LLAMA_API_KEY' || apiKey.isEmpty) {
+    // Fallback ke simulasi jika key kosong atau masih placeholder
+    if (apiKey.isEmpty || apiKey == 'YOUR_LLAMA_API_KEY') {
        await Future.delayed(const Duration(seconds: 1));
        if (userMessage.toLowerCase().contains("hujan")) {
            return "Sepertinya akan turun hujan hari ini. Harap siapkan payung dan berhati-hati di jalan ya!";
@@ -523,9 +524,11 @@ Pertanyaan Pengguna: "$userMessage"''';
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $apiKey',
+          'HTTP-Referer': 'https://siagakota.app',
+          'X-Title': 'SiagaKota',
         },
         body: jsonEncode({
-          'model': 'meta-llama/llama-4-scout-17b-16e-instruct',
+          'model': 'meta-llama/llama-4-scout:free',
           'temperature': 0.7,
           'max_tokens': 800,
           'messages': [
@@ -537,8 +540,9 @@ Pertanyaan Pengguna: "$userMessage"''';
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        return data['choices'][0]['message']['content'];
+        return data['choices'][0]['message']['content'] as String?;
       } else {
+        debugPrint('[SiagaBot] Error ${response.statusCode}: ${response.body}');
         return 'Maaf, terjadi kesalahan dari server AI. Code: ${response.statusCode}';
       }
     } catch (e) {
