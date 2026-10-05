@@ -4,3 +4,4 @@ export 'hotspot.dart';
 export 'report.dart';
 export 'app_update_info.dart';
 export 'user_profile.dart';
+export 'weather.dart';

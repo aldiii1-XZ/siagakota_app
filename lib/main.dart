@@ -22,6 +22,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'update_service.dart';
 import 'theme.dart';
 import 'components.dart';
+import 'widgets/lingkungan_panel.dart';
 import 'models/index.dart';
 import 'controllers/index.dart';
 import 'services/index.dart';
@@ -46,6 +47,7 @@ Future<void> main() async {
         ChangeNotifierProvider(
           create: (_) => ReportController(cloud: cloudSync),
         ),
+        ChangeNotifierProvider(create: (_) => EnvironmentController()),
       ],
       child: const SiagaKotaApp(),
     ),
@@ -160,7 +162,17 @@ class _HomeShellState extends State<HomeShell>
 
   Future<void> _initLocationFlow() async {
     final ok = await _ensureLocationPermission();
-    if (mounted && ok) await _ambilLokasiAwal();
+    if (!mounted) return;
+    if (ok) {
+      await _ambilLokasiAwal();
+    } else {
+      // Izin lokasi ditolak: tetap tampilkan data lingkungan memakai
+      // titik pusat Kota Palembang agar dashboard tidak kosong.
+      context.read<EnvironmentController>().muatSemua(
+            lat: -2.9761,
+            lon: 104.7754,
+          );
+    }
   }
 
   Future<void> _checkUpdate() async {
@@ -326,6 +338,13 @@ class _HomeShellState extends State<HomeShell>
         _currentPosition = pos;
         _locLabel = label;
       });
+      // Muat data lingkungan (cuaca, kualitas udara, gempa) untuk titik ini.
+      if (mounted) {
+        context.read<EnvironmentController>().muatSemua(
+              lat: pos.latitude,
+              lon: pos.longitude,
+            );
+      }
     } catch (e) {
       setState(() => _locError = 'Gagal ambil lokasi: $e');
       _showLocError();
@@ -463,7 +482,11 @@ class _SiagaBotWidgetState extends State<SiagaBotWidget> {
       "- Jenis: ${r.jenis}, Waktu: ${DateFormat('dd MMM HH:mm').format(r.createdAt)}, Lokasi: ${r.kecamatan} (${r.latitude.toStringAsFixed(4)}, ${r.longitude.toStringAsFixed(4)}), Status: ${r.status.label}, Detail: ${r.deskripsi}"
     ).join('\n');
 
-    final reply = await _callLlama(text, reportsContext);
+    // Sertakan data lingkungan nyata (cuaca, kualitas udara, gempa) bila ada.
+    final env = context.read<EnvironmentController>();
+    final envContext = _bangunKonteksLingkungan(env);
+
+    final reply = await _callLlama(text, reportsContext, envContext);
     if (mounted) {
       setState(() {
         _messages.add({'role': 'ai', 'text': reply ?? 'Maaf, tidak bisa memproses permintaan.'});
@@ -481,17 +504,46 @@ class _SiagaBotWidgetState extends State<SiagaBotWidget> {
     });
   }
 
-  Future<String?> _callLlama(String userMessage, String reportsContext) async {
+  /// Susun ringkasan kondisi lingkungan untuk diberikan ke AI sebagai konteks.
+  String _bangunKonteksLingkungan(EnvironmentController env) {
+    final baris = <String>[];
+    final c = env.cuaca;
+    if (c != null) {
+      baris.add(
+        'Cuaca saat ini: ${c.sekarang.kondisi}, suhu ${c.sekarang.suhu.toStringAsFixed(1)}°C '
+        '(terasa ${c.sekarang.suhuTerasa.toStringAsFixed(1)}°C), kelembapan ${c.sekarang.kelembapan}%, '
+        'angin ${c.sekarang.kecepatanAngin.toStringAsFixed(0)} km/j dari ${c.sekarang.arahMataAngin}, '
+        'curah hujan 24 jam ke depan ${c.curahHujan24Jam.toStringAsFixed(1)} mm '
+        '(risiko banjir ${c.risikoBanjir.toStringAsFixed(0)}/5).',
+      );
+    }
+    final u = env.udara;
+    if (u != null) {
+      baris.add(
+        'Kualitas udara: AQI ${u.aqi} (${u.kategori.label}), PM2.5 ${u.pm25.toStringAsFixed(1)} µg/m³, '
+        'PM10 ${u.pm10.toStringAsFixed(1)} µg/m³, indeks UV ${u.indeksUv.toStringAsFixed(1)} (${u.kategoriUv}).',
+      );
+    }
+    final g = env.gempa;
+    if (g != null) {
+      baris.add(
+        'Gempa terkini (BMKG): M${g.magnitude.toStringAsFixed(1)}, kedalaman ${g.kedalaman}, '
+        '${g.wilayah}, ${g.tanggal} ${g.jam}, potensi: ${g.potensi}.',
+      );
+    }
+    if (baris.isEmpty) return '';
+    return 'Kondisi Kota Saat Ini (data resmi):\n${baris.join('\n')}';
+  }
+
+  Future<String?> _callLlama(String userMessage, String reportsContext, String envContext) async {
     const apiKey = String.fromEnvironment('LLAMA_API_KEY', defaultValue: '');
     const apiUrl = String.fromEnvironment('LLAMA_API_URL', defaultValue: 'https://openrouter.ai/api/v1/chat/completions');
     
-    // Fallback ke simulasi jika key kosong atau masih placeholder
+    // Bila kunci AI belum dipasang, jawab memakai data nyata yang sudah
+    // tersedia di aplikasi (cuaca, kualitas udara, gempa, laporan) supaya
+    // pengguna tetap mendapat informasi yang benar — bukan jawaban simulasi.
     if (apiKey.isEmpty || apiKey == 'YOUR_LLAMA_API_KEY') {
-       await Future.delayed(const Duration(seconds: 1));
-       if (userMessage.toLowerCase().contains("hujan")) {
-           return "Sepertinya akan turun hujan hari ini. Harap siapkan payung dan berhati-hati di jalan ya!";
-       }
-       return "Maaf, saya Asisten Laporan Warga versi simulasi karena API Key Llama belum dikonfigurasi. Saya siap membantu Anda jika API Key sudah dimasukkan!";
+       return _jawabLokal(userMessage, reportsContext, envContext);
     }
 
     try {
@@ -516,6 +568,8 @@ ALUR KERJA:
 
       final promptContext = '''Data Laporan Saat Ini:
 ${reportsContext.isEmpty ? "Tidak ada laporan aktif di sistem." : reportsContext}
+
+${envContext.isEmpty ? "Kondisi Kota Saat Ini: data lingkungan belum tersedia." : envContext}
 
 Pertanyaan Pengguna: "$userMessage"''';
 
@@ -548,6 +602,59 @@ Pertanyaan Pengguna: "$userMessage"''';
     } catch (e) {
       return 'Maaf, terjadi kesalahan koneksi AI: $e';
     }
+  }
+
+  /// Jawaban berbasis data nyata ketika API AI belum dikonfigurasi.
+  /// Menjawab pertanyaan umum memakai konteks lingkungan & laporan yang
+  /// sudah tersedia, sehingga bot tidak pernah memberi jawaban kosong.
+  String _jawabLokal(String tanya, String reportsContext, String envContext) {
+    final t = tanya.toLowerCase();
+    final bagian = <String>[];
+
+    final tanyaCuaca = t.contains('cuaca') || t.contains('hujan') ||
+        t.contains('panas') || t.contains('suhu') || t.contains('gerimis');
+    final tanyaUdara = t.contains('udara') || t.contains('aqi') ||
+        t.contains('polusi') || t.contains('pm2') || t.contains('asap');
+    final tanyaGempa = t.contains('gempa') || t.contains('lindu');
+    final tanyaLaporan = t.contains('laporan') || t.contains('banjir') ||
+        t.contains('jalan') || t.contains('rusak');
+
+    if (tanyaCuaca) {
+      final cuaca = _ambilBaris(envContext, 'Cuaca saat ini');
+      bagian.add(cuaca.isNotEmpty
+          ? '$cuaca'
+          : 'Data cuaca belum tersedia. Coba tekan Perbarui di kartu Cuaca.');
+    }
+    if (tanyaUdara) {
+      final udara = _ambilBaris(envContext, 'Kualitas udara');
+      bagian.add(udara.isNotEmpty
+          ? '$udara'
+          : 'Data kualitas udara belum tersedia. Coba tekan Perbarui.');
+    }
+    if (tanyaGempa) {
+      final gempa = _ambilBaris(envContext, 'Gempa terkini');
+      bagian.add(gempa.isNotEmpty
+          ? '$gempa'
+          : 'Data gempa terbaru belum tersedia saat ini.');
+    }
+    if (tanyaLaporan || bagian.isEmpty) {
+      bagian.add(reportsContext.isEmpty
+          ? 'Saat ini tidak ada laporan warga yang tercatat di sistem.'
+          : 'Laporan warga yang tercatat:\n$reportsContext');
+    }
+
+    if (bagian.isEmpty) {
+      return 'Saya bisa membantu soal cuaca, kualitas udara, gempa, dan laporan warga. Silakan tanya salah satunya.';
+    }
+    return bagian.join('\n\n');
+  }
+
+  /// Ambil satu baris konteks yang diawali penanda tertentu.
+  String _ambilBaris(String konteks, String penanda) {
+    for (final b in konteks.split('\n')) {
+      if (b.startsWith(penanda)) return b;
+    }
+    return '';
   }
 
   @override
@@ -2025,6 +2132,8 @@ class DashboardView extends StatelessWidget {
                 ),
               ],
             ),
+            const SizedBox(height: 20),
+            const PanelLingkungan(),
             const SizedBox(height: 20),
             // RADAR SENTIMEN PUBLIK — PETUGAS ONLY
             if (auth.isAdmin) ...[
@@ -3990,6 +4099,9 @@ class _ReportFormPageState extends State<ReportFormPage> {
 
     final controller = context.read<ReportController>();
     final auth = context.read<AuthController>();
+    // Sertakan risiko banjir dari data cuaca nyata (bila sudah dimuat),
+    // agar laporan banjir lebih diprioritaskan saat hujan lebat.
+    final env = context.read<EnvironmentController>();
     await controller.addReport(
       nama: namaController.text,
       jenis: jenis,
@@ -4000,6 +4112,7 @@ class _ReportFormPageState extends State<ReportFormPage> {
       position: position!,
       fotoPath: fotoPath,
       fotoBytes: fotoBytes,
+      weatherRisk: jenis == 'Banjir' ? env.risikoBanjir : null,
     );
     if (!mounted) return;
     Navigator.pop(context);

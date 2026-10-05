@@ -67,6 +67,7 @@ class ReportController extends ChangeNotifier {
     required Position position,
     String? fotoPath,
     Uint8List? fotoBytes,
+    double? weatherRisk,
   }) async {
     final reportId = _uuid.v4();
 
@@ -91,7 +92,9 @@ class ReportController extends ChangeNotifier {
       accuracyMeters: position.accuracy.isFinite ? position.accuracy : null,
       createdAt: DateTime.now(),
       owner: owner,
-      weatherRisk: _mockWeatherRisk(position.latitude, position.longitude),
+      // Pakai risiko banjir dari data cuaca nyata bila tersedia.
+      // Nilai 0 dipakai bila belum ada data (netral, tidak menaikkan prioritas).
+      weatherRisk: weatherRisk ?? _risikoBanjirNetral(),
     );
     final duplicate = _findDuplicate(newReport);
     if (duplicate != null) {
@@ -209,9 +212,8 @@ class ReportController extends ChangeNotifier {
     return null;
   }
 
-  double _mockWeatherRisk(double lat, double lng) {
-    return 0.5;
-  }
+  /// Risiko banjir netral saat data cuaca belum tersedia.
+  double _risikoBanjirNetral() => 0;
 
   Future<void> _persistReports() async {
     try {
