@@ -54,20 +54,16 @@ class _SiagaBotWidgetState extends State<SiagaBotWidget> {
     });
     _scrollToBottom();
     
-    // Ambil data laporan dari ReportController sebagai context (pengganti tools query database)
+    // Siapkan data nyata (laporan warga + kondisi lingkungan) sebagai bahan
+    // jawaban. Data diteruskan dalam bentuk objek, bukan teks, supaya bot
+    // bisa menyusun kalimat yang enak dibaca.
     final reportCtrl = context.read<ReportController>();
-    final reportsContext = reportCtrl.reports.map((r) => 
-      "- Jenis: ${r.jenis}, Waktu: ${DateFormat('dd MMM HH:mm').format(r.createdAt)}, Lokasi: ${r.kecamatan} (${r.latitude.toStringAsFixed(4)}, ${r.longitude.toStringAsFixed(4)}), Status: ${r.status.label}, Detail: ${r.deskripsi}"
-    ).join('\n');
-
-    // Sertakan data lingkungan nyata (cuaca, kualitas udara, gempa) bila ada.
     final env = context.read<EnvironmentController>();
-    final envContext = _bangunKonteksLingkungan(env);
 
-    final reply = await _callLlama(text, reportsContext, envContext);
+    final reply = await _callLlama(text, reportCtrl.reports, env);
     if (mounted) {
       setState(() {
-        _messages.add({'role': 'ai', 'text': reply ?? 'Maaf, tidak bisa memproses permintaan.'});
+        _messages.add({'role': 'ai', 'text': reply ?? 'Maaf, saya belum bisa menjawab itu.'});
         _loading = false;
       });
       _scrollToBottom();
@@ -82,75 +78,74 @@ class _SiagaBotWidgetState extends State<SiagaBotWidget> {
     });
   }
 
-  /// Susun ringkasan kondisi lingkungan untuk diberikan ke AI sebagai konteks.
-  String _bangunKonteksLingkungan(EnvironmentController env) {
+  /// Ringkasan kondisi lingkungan dalam bentuk teks, dipakai sebagai bahan
+  /// untuk AI (bukan untuk ditampilkan langsung ke pengguna).
+  String _konteksAi(EnvironmentController env) {
     final baris = <String>[];
     final c = env.cuaca;
     if (c != null) {
       baris.add(
-        'Cuaca saat ini: ${c.sekarang.kondisi}, suhu ${c.sekarang.suhu.toStringAsFixed(1)}°C '
-        '(terasa ${c.sekarang.suhuTerasa.toStringAsFixed(1)}°C), kelembapan ${c.sekarang.kelembapan}%, '
+        'Cuaca: ${c.sekarang.kondisi}, ${c.sekarang.suhu.toStringAsFixed(1)} derajat C '
+        '(terasa ${c.sekarang.suhuTerasa.toStringAsFixed(1)}), kelembapan ${c.sekarang.kelembapan} persen, '
         'angin ${c.sekarang.kecepatanAngin.toStringAsFixed(0)} km/j dari ${c.sekarang.arahMataAngin}, '
-        'curah hujan 24 jam ke depan ${c.curahHujan24Jam.toStringAsFixed(1)} mm '
-        '(risiko banjir ${c.risikoBanjir.toStringAsFixed(0)}/5).',
+        'prakiraan hujan 24 jam ${c.curahHujan24Jam.toStringAsFixed(1)} mm '
+        '(risiko banjir ${c.risikoBanjir.toStringAsFixed(0)} dari 5).',
       );
     }
     final u = env.udara;
     if (u != null) {
       baris.add(
-        'Kualitas udara: AQI ${u.aqi} (${u.kategori.label}), PM2.5 ${u.pm25.toStringAsFixed(1)} µg/m³, '
-        'PM10 ${u.pm10.toStringAsFixed(1)} µg/m³, indeks UV ${u.indeksUv.toStringAsFixed(1)} (${u.kategoriUv}).',
+        'Kualitas udara: AQI ${u.aqi} (${u.kategori.label}), PM2.5 ${u.pm25.toStringAsFixed(1)} ug/m3, '
+        'PM10 ${u.pm10.toStringAsFixed(1)} ug/m3, indeks UV ${u.indeksUv.toStringAsFixed(1)} (${u.kategoriUv}).',
       );
     }
     final g = env.gempa;
     if (g != null) {
       baris.add(
-        'Gempa terkini (BMKG): M${g.magnitude.toStringAsFixed(1)}, kedalaman ${g.kedalaman}, '
-        '${g.wilayah}, ${g.tanggal} ${g.jam}, potensi: ${g.potensi}.',
+        'Gempa terkini: magnitudo ${g.magnitude.toStringAsFixed(1)}, kedalaman ${g.kedalaman}, '
+        '${g.wilayah}, ${g.tanggal} ${g.jam}, ${g.potensi}.',
       );
     }
     if (baris.isEmpty) return '';
     return 'Kondisi Kota Saat Ini (data resmi):\n${baris.join('\n')}';
   }
 
-  Future<String?> _callLlama(String userMessage, String reportsContext, String envContext) async {
+  Future<String?> _callLlama(String userMessage, List<Report> laporan, EnvironmentController env) async {
     const apiKey = String.fromEnvironment('LLAMA_API_KEY', defaultValue: '');
     const apiUrl = String.fromEnvironment('LLAMA_API_URL', defaultValue: _titikAiDefault);
     const apiModel = String.fromEnvironment('LLAMA_API_MODEL', defaultValue: _modelAiDefault);
-    
-    // Bila kunci AI belum dipasang, jawab memakai data nyata yang sudah
-    // tersedia di aplikasi (cuaca, kualitas udara, gempa, laporan) supaya
-    // pengguna tetap mendapat informasi yang benar — bukan jawaban simulasi.
+
+    // Bila kunci AI belum dipasang, jawab dari data nyata yang sudah ada
+    // di aplikasi supaya pengguna tetap dapat informasi yang benar.
     if (apiKey.isEmpty || apiKey == 'YOUR_LLAMA_API_KEY') {
-       return _jawabLokal(userMessage, reportsContext, envContext);
+      return _jawabLokal(userMessage, laporan, env);
     }
 
     try {
-      final systemInstruction = '''Anda adalah "Asisten Laporan Warga", bot AI resmi untuk aplikasi pelaporan banjir dan kerusakan infrastruktur. 
-Tugas utama Anda adalah memberikan informasi yang akurat dan *real-time* kepada pengguna berdasarkan laporan yang ada di database sistem.
+      final reportsContext = laporan
+          .map((r) =>
+              '- ${r.jenis} di ${r.kecamatan}, ${DateFormat('dd MMM HH:mm').format(r.createdAt)}, '
+              'status ${r.status.label}, ${r.votes} dukungan. Detail: ${r.deskripsi}')
+          .join('\n');
+      final envContext = _konteksAi(env);
 
-PANDUAN UTAMA & BATASAN (SANGAT PENTING):
-1. SUMBER KEBENARAN TUNGGAL: Anda TIDAK BOLEH mengarang, menebak, atau memprediksi kejadian banjir, cuaca, atau kerusakan infrastruktur. Anda HANYA boleh menjawab berdasarkan data laporan yang diberikan pada konteks.
-2. ANTI-HALUSINASI: Jika data mengembalikan hasil kosong (tidak ada laporan relevan), Anda harus menjawab bahwa tidak ada laporan yang masuk. (Contoh: "Berdasarkan data kami, saat ini tidak ada laporan banjir di [Lokasi] untuk hari ini.").
-3. JANGAN MENJAMIN KESELAMATAN: Jika tidak ada laporan, jangan pernah menyatakan bahwa area tersebut "100% aman". Cukup nyatakan bahwa "tidak ada laporan yang tercatat di sistem".
-4. FORMAT JAWABAN (JIKA ADA DATA): Jika data ditemukan, berikan informasi secara ringkas dan terstruktur. Wajib mencakup:
-   - Jenis Kejadian (Banjir/Jalan Rusak/dll)
-   - Lokasi Spesifik
-   - Waktu Laporan Masuk
-   - Detail/Status (misal: "tinggi air 50cm" atau "sedang ditangani")
-5. NADA BICARA: Profesional, sopan, empati, dan efisien. Jangan gunakan kalimat berbunga-bunga. Pengguna mungkin dalam kondisi darurat, jadi berikan jawaban yang langsung pada intinya.
+      final systemInstruction =
+          '''Anda adalah "Asisten Laporan Warga" pada aplikasi SiagaKota, aplikasi pelaporan banjir dan kerusakan infrastruktur Kota Palembang.
 
-ALUR KERJA:
-- Saat pengguna bertanya, segera identifikasi parameter (kategori kejadian, lokasi, tanggal/waktu).
-- Cocokkan dengan "Data Laporan Saat Ini" yang dilampirkan bersama pertanyaan.
-- Terjemahkan data mentah dari konteks menjadi kalimat natural yang mudah dibaca pengguna.''';
+Aturan menjawab:
+1. Jawab HANYA berdasarkan data yang diberikan pada konteks. Jangan mengarang kejadian, angka, atau prakiraan.
+2. Bila data yang ditanyakan kosong, katakan terus terang bahwa data itu belum ada atau tidak tercatat — jangan menjamin suatu wilayah "aman".
+3. Gunakan bahasa Indonesia yang ramah, jelas, dan mengalir seperti percakapan. Hindari daftar bernomor kecuali diminta.
+4. Ringkas: cukup 2-4 kalimat untuk pertanyaan sederhana.
+5. Tulis satuan dengan wajar (contoh: 28,1 derajat Celsius, bukan 28.1°C).
+6. Bila pengguna bertanya di luar topik kota/lingkungan/laporan, arahkan dengan sopan kembali ke topik tersebut.''';
 
-      final promptContext = '''Data Laporan Saat Ini:
-${reportsContext.isEmpty ? "Tidak ada laporan aktif di sistem." : reportsContext}
+      final promptContext = '''Data laporan warga:
+${reportsContext.isEmpty ? 'Belum ada laporan warga yang tercatat.' : reportsContext}
 
-${envContext.isEmpty ? "Kondisi Kota Saat Ini: data lingkungan belum tersedia." : envContext}
+${envContext.isEmpty ? 'Data cuaca, kualitas udara, dan gempa belum tersedia.' : envContext}
 
-Pertanyaan Pengguna: "$userMessage"''';
+Pertanyaan pengguna: "$userMessage"''';
 
       final response = await http.post(
         Uri.parse(apiUrl),
@@ -174,73 +169,137 @@ Pertanyaan Pengguna: "$userMessage"''';
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         final isi = data['choices'][0]['message']['content'] as String?;
-        if (isi != null && isi.trim().isNotEmpty) return isi;
-        // Jawaban kosong dari server -> pakai jawaban lokal agar bot tetap guna.
-        return _jawabLokal(userMessage, reportsContext, envContext);
+        if (isi != null && isi.trim().isNotEmpty) return isi.trim();
+        // Jawaban kosong dari server -> pakai jawaban lokal agar tetap guna.
+        return _jawabLokal(userMessage, laporan, env);
       } else {
         // Jangan tampilkan pesan error mentah ke pengguna; jawab dari data
-        // nyata yang sudah ada, dan catat penyebabnya untuk pengembang.
+        // nyata yang ada, dan catat penyebabnya untuk pengembang.
         debugPrint('[SiagaBot] AI gagal ${response.statusCode}: ${response.body}');
-        return _jawabLokal(userMessage, reportsContext, envContext);
+        return _jawabLokal(userMessage, laporan, env);
       }
     } catch (e) {
       // Termasuk gagal jaringan / CORS pada web -> tetap jawab dari data nyata.
       debugPrint('[SiagaBot] AI tidak terjangkau: $e');
-      return _jawabLokal(userMessage, reportsContext, envContext);
+      return _jawabLokal(userMessage, laporan, env);
     }
   }
 
-  /// Jawaban berbasis data nyata ketika API AI belum dikonfigurasi.
-  /// Menjawab pertanyaan umum memakai konteks lingkungan & laporan yang
-  /// sudah tersedia, sehingga bot tidak pernah memberi jawaban kosong.
-  String _jawabLokal(String tanya, String reportsContext, String envContext) {
+  /// Jawaban yang disusun dari data nyata di aplikasi, dipakai saat kunci AI
+  /// belum dipasang atau server AI tidak dapat dihubungi. Ditulis sebagai
+  /// kalimat mengalir — bukan tempelan baris data — agar enak dibaca.
+  String _jawabLokal(String tanya, List<Report> laporan, EnvironmentController env) {
     final t = tanya.toLowerCase();
     final bagian = <String>[];
 
     final tanyaCuaca = t.contains('cuaca') || t.contains('hujan') ||
-        t.contains('panas') || t.contains('suhu') || t.contains('gerimis');
+        t.contains('panas') || t.contains('suhu') || t.contains('gerimis') ||
+        t.contains('angin');
     final tanyaUdara = t.contains('udara') || t.contains('aqi') ||
-        t.contains('polusi') || t.contains('pm2') || t.contains('asap');
+        t.contains('polusi') || t.contains('pm2') || t.contains('asap') ||
+        t.contains('uv');
     final tanyaGempa = t.contains('gempa') || t.contains('lindu');
     final tanyaLaporan = t.contains('laporan') || t.contains('banjir') ||
-        t.contains('jalan') || t.contains('rusak');
+        t.contains('jalan') || t.contains('rusak') || t.contains('aduan');
 
-    if (tanyaCuaca) {
-      final cuaca = _ambilBaris(envContext, 'Cuaca saat ini');
-      bagian.add(cuaca.isNotEmpty
-          ? cuaca
-          : 'Data cuaca belum tersedia. Coba tekan Perbarui di kartu Cuaca.');
-    }
-    if (tanyaUdara) {
-      final udara = _ambilBaris(envContext, 'Kualitas udara');
-      bagian.add(udara.isNotEmpty
-          ? udara
-          : 'Data kualitas udara belum tersedia. Coba tekan Perbarui.');
-    }
-    if (tanyaGempa) {
-      final gempa = _ambilBaris(envContext, 'Gempa terkini');
-      bagian.add(gempa.isNotEmpty
-          ? gempa
-          : 'Data gempa terbaru belum tersedia saat ini.');
-    }
-    if (tanyaLaporan || bagian.isEmpty) {
-      bagian.add(reportsContext.isEmpty
-          ? 'Saat ini tidak ada laporan warga yang tercatat di sistem.'
-          : 'Laporan warga yang tercatat:\n$reportsContext');
-    }
+    if (tanyaCuaca) bagian.add(_kalimatCuaca(env));
+    if (tanyaUdara) bagian.add(_kalimatUdara(env));
+    if (tanyaGempa) bagian.add(_kalimatGempa(env));
+    if (tanyaLaporan || bagian.isEmpty) bagian.add(_kalimatLaporan(laporan));
 
-    if (bagian.isEmpty) {
-      return 'Saya bisa membantu soal cuaca, kualitas udara, gempa, dan laporan warga. Silakan tanya salah satunya.';
-    }
     return bagian.join('\n\n');
   }
 
-  /// Ambil satu baris konteks yang diawali penanda tertentu.
-  String _ambilBaris(String konteks, String penanda) {
-    for (final b in konteks.split('\n')) {
-      if (b.startsWith(penanda)) return b;
+  String _kalimatCuaca(EnvironmentController env) {
+    final c = env.cuaca;
+    if (c == null) {
+      return 'Data cuaca belum berhasil dimuat. Coba tekan tombol Perbarui pada kartu Cuaca ya.';
     }
-    return '';
+    final s = c.sekarang;
+    final sb = StringBuffer(
+      'Saat ini cuaca di sekitar Anda ${s.kondisi.toLowerCase()} dengan suhu '
+      '${s.suhu.toStringAsFixed(1)} derajat Celsius (terasa ${s.suhuTerasa.toStringAsFixed(1)} derajat). '
+      'Kelembapan ${s.kelembapan} persen dan angin bertiup sekitar '
+      '${s.kecepatanAngin.toStringAsFixed(0)} kilometer per jam dari arah ${s.arahMataAngin}.',
+    );
+    final risiko = c.risikoBanjir;
+    if (c.curahHujan24Jam >= 0.5) {
+      sb.write(
+        ' Prakiraan hujan 24 jam ke depan sekitar '
+        '${c.curahHujan24Jam.toStringAsFixed(0)} mm.',
+      );
+    }
+    if (risiko >= 4) {
+      sb.write(' Karena curah hujan tinggi, potensi banjir perlu diwaspadai.');
+    } else if (risiko >= 2) {
+      sb.write(' Ada kemungkinan hujan, sebaiknya siapkan payung.');
+    }
+    return sb.toString();
+  }
+
+  String _kalimatUdara(EnvironmentController env) {
+    final u = env.udara;
+    if (u == null) {
+      return 'Data kualitas udara belum berhasil dimuat. Coba tekan tombol Perbarui ya.';
+    }
+    return 'Kualitas udara saat ini tergolong ${u.kategori.label.toLowerCase()} '
+        'dengan indeks AQI ${u.aqi}. Kadar PM2.5 tercatat ${u.pm25.toStringAsFixed(0)} mikrogram per meter kubik '
+        'dan PM10 ${u.pm10.toStringAsFixed(0)}. Indeks UV ${u.indeksUv.toStringAsFixed(1)} (${u.kategoriUv.toLowerCase()}). '
+        '${u.saran}';
+  }
+
+  /// Mengubah catatan "Potensi" dari BMKG menjadi kalimat yang wajar.
+  /// Teks aslinya kadang berbunyi "Gempa ini dirasakan untuk diteruskan pada
+  /// masyarakat", yang membingungkan bila ditampilkan apa adanya.
+  String _potensiGempa(String potensi) {
+    final p = potensi.toLowerCase();
+    if (p.contains('tidak berpotensi tsunami')) {
+      return 'Gempa ini tidak berpotensi menimbulkan tsunami.';
+    }
+    if (p.contains('berpotensi tsunami')) {
+      return 'Gempa ini berpotensi menimbulkan tsunami. Harap waspada.';
+    }
+    if (p.contains('dirasakan')) {
+      return 'Getaran ini dirasakan warga di sekitar lokasi.';
+    }
+    return potensi;
+  }
+
+  String _kalimatGempa(EnvironmentController env) {
+    final g = env.gempa;
+    if (g == null) {
+      return 'Data gempa terbaru belum berhasil dimuat. Coba tekan tombol Perbarui ya.';
+    }
+    // Teks BMKG sudah berupa kalimat lengkap ("Pusat gempa berada di ..."),
+    // jadi tidak perlu ditambah kata pengantar agar tidak berulang.
+    // Nama tempat tetap memakai huruf aslinya (bukan dihuruf-kecilkan).
+    return 'Gempa terakhir yang tercatat BMKG berkekuatan magnitudo '
+        '${g.magnitude.toStringAsFixed(1)} pada kedalaman ${g.kedalaman}. '
+        '${g.wilayah}, terjadi ${g.tanggal} pukul ${g.jam}. '
+        '${_potensiGempa(g.potensi)}';
+  }
+
+  String _kalimatLaporan(List<Report> laporan) {
+    if (laporan.isEmpty) {
+      return 'Sejauh ini belum ada laporan warga yang tercatat. Kalau Anda menemukan masalah di sekitar, '
+          'silakan tekan tombol "Buat Laporan" ya.';
+    }
+    final aktif = laporan.where((r) => r.status != ReportStatus.selesai).length;
+    final banjir = laporan.where((r) => r.jenis == 'Banjir').length;
+    final sb = StringBuffer(
+      'Saat ini ada ${laporan.length} laporan warga yang tercatat, '
+      '$aktif di antaranya masih dalam penanganan.',
+    );
+    if (banjir > 0) {
+      sb.write(' Laporan terkait banjir berjumlah $banjir.');
+    }
+    // Sebutkan laporan terbaru sebagai contoh.
+    final terbaru = laporan.first;
+    sb.write(
+      ' Laporan terbaru: ${terbaru.jenis} di ${terbaru.kecamatan} '
+      '(${terbaru.status.label.toLowerCase()}).',
+    );
+    return sb.toString();
   }
 
   @override
