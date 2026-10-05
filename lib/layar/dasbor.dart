@@ -17,6 +17,7 @@ import '../layar/laporan.dart';
 import '../models/index.dart';
 import '../theme.dart';
 import '../widgets/lingkungan_panel.dart';
+import '../widgets/papan_petugas.dart';
 
 class DashboardView extends StatelessWidget {
   const DashboardView({super.key});
@@ -101,11 +102,11 @@ class DashboardView extends StatelessWidget {
             const SizedBox(height: 20),
             const PanelLingkungan(),
             const SizedBox(height: 20),
-            // RADAR SENTIMEN PUBLIK — PETUGAS ONLY
+            // PANEL PETUGAS — dihitung dari data laporan nyata
             if (auth.isAdmin) ...[
-              _RadarSentimenPanel(reportCount: total, urgentCount: visible.where((r) => r.severity >= 4).length),
+              PantauanLaporanPanel(reports: visible),
               const SizedBox(height: 16),
-              const _CctvAiFeedPanel(),
+              PapanTindakLanjutPanel(reports: visible),
               const SizedBox(height: 20),
             ],
             LayoutBuilder(
@@ -895,217 +896,6 @@ class _DashboardActionsPanel extends StatelessWidget {
               onPressed: onExport,
               icon: const Icon(Icons.download_rounded),
               label: const Text('Buka Aksi Export'),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _RadarSentimenPanel extends StatelessWidget {
-  const _RadarSentimenPanel({required this.reportCount, required this.urgentCount});
-  final int reportCount;
-  final int urgentCount;
-
-  @override
-  Widget build(BuildContext context) {
-    final panikPct = reportCount == 0 ? 0 : ((urgentCount / reportCount) * 100).round();
-    final emosi = panikPct > 60 ? 'Panik' : panikPct > 30 ? 'Marah' : 'Netral';
-    final statusStr = panikPct > 60 ? 'Kritis' : panikPct > 30 ? 'Waspada' : 'Kondusif';
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: const Color(0xFF0B1120),
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: const Color(0xFF1E293B)),
-        boxShadow: [BoxShadow(color: Colors.black.withAlpha(60), blurRadius: 20, offset: const Offset(0, 8))],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(color: Colors.red.withAlpha(50), borderRadius: BorderRadius.circular(12)),
-                child: const Icon(Icons.local_fire_department_rounded, color: Color(0xFFF87171), size: 20),
-              ),
-              const SizedBox(width: 12),
-              const Text('Radar Sentimen Publik', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 15)),
-              const Spacer(),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(color: const Color(0xFF1E293B), borderRadius: BorderRadius.circular(8)),
-                child: Text(statusStr, style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 11, fontWeight: FontWeight.w700)),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          const Text('STATUS EMOSI DOMINAN', style: TextStyle(color: Color(0xFF475569), fontSize: 9, fontWeight: FontWeight.w800, letterSpacing: 1.5)),
-          const SizedBox(height: 4),
-          Text(emosi, style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w900)),
-          const SizedBox(height: 14),
-          Row(
-            children: [
-              const Text('TINGKAT KEPANIKAN', style: TextStyle(color: Color(0xFF475569), fontSize: 9, fontWeight: FontWeight.w800, letterSpacing: 1.5)),
-              const Spacer(),
-              Text('$panikPct%', style: const TextStyle(color: Color(0xFFF87171), fontSize: 12, fontWeight: FontWeight.w800)),
-            ],
-          ),
-          const SizedBox(height: 6),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(4),
-            child: LinearProgressIndicator(
-              value: panikPct / 100,
-              minHeight: 8,
-              backgroundColor: const Color(0xFF1E293B),
-              valueColor: AlwaysStoppedAnimation<Color>(
-                panikPct > 60 ? const Color(0xFFF87171) : const Color(0xFFFB923C),
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              const Icon(Icons.report_outlined, size: 14, color: Color(0xFF64748B)),
-              const SizedBox(width: 6),
-              Text('$reportCount total laporan • $urgentCount urgensi tinggi',
-                  style: const TextStyle(color: Color(0xFF64748B), fontSize: 12, fontWeight: FontWeight.w500)),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ═══════════════════════════════════════
-// CCTV AI LIVE FEED PANEL (Petugas)
-// ═══════════════════════════════════════
-
-class _CctvAiFeedPanel extends StatefulWidget {
-  const _CctvAiFeedPanel();
-
-  @override
-  State<_CctvAiFeedPanel> createState() => _CctvAiFeedPanelState();
-}
-
-class _CctvAiFeedPanelState extends State<_CctvAiFeedPanel> with SingleTickerProviderStateMixin {
-  late AnimationController _scanController;
-  late Animation<double> _scanAnimation;
-
-  @override
-  void initState() {
-    super.initState();
-    _scanController = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 3),
-    )..repeat(reverse: true);
-    _scanAnimation = Tween<double>(begin: 0, end: 200).animate(
-      CurvedAnimation(parent: _scanController, curve: Curves.linear),
-    );
-  }
-
-  @override
-  void dispose() {
-    _scanController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: const Color(0xFF0F172A),
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: const Color(0xFF1E293B)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
-            child: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(color: const Color(0xFF4F46E5).withAlpha(40), borderRadius: BorderRadius.circular(10)),
-                  child: const Icon(Icons.videocam_outlined, color: Color(0xFF818CF8), size: 18),
-                ),
-                const SizedBox(width: 12),
-                const Text('CCTV AI Live Feed', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 14)),
-                const Spacer(),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(color: Colors.red.withAlpha(40), borderRadius: BorderRadius.circular(6)),
-                  child: const Row(children: [
-                    Icon(Icons.circle, color: Color(0xFFF87171), size: 6),
-                    SizedBox(width: 5),
-                    Text('LIVE', style: TextStyle(color: Color(0xFFF87171), fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: 1)),
-                  ]),
-                ),
-              ],
-            ),
-          ),
-          // Simulated CCTV feed
-          ClipRRect(
-            borderRadius: const BorderRadius.only(bottomLeft: Radius.circular(24), bottomRight: Radius.circular(24)),
-            child: Container(
-              height: 200,
-              color: const Color(0xFF020817),
-              child: Stack(
-                children: [
-                  // Scan line
-                  AnimatedBuilder(
-                    animation: _scanAnimation,
-                    builder: (context, child) {
-                      return Positioned(
-                        top: _scanAnimation.value, left: 0, right: 0,
-                        child: Container(
-                          height: 2, 
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF34D399).withAlpha(200),
-                            boxShadow: [
-                              BoxShadow(color: const Color(0xFF34D399).withAlpha(100), blurRadius: 10, spreadRadius: 2),
-                            ],
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                  // Bounding boxes
-                  Positioned(
-                    top: 50, left: 60,
-                    child: Container(
-                      width: 70, height: 50,
-                      decoration: BoxDecoration(border: Border.all(color: const Color(0xFF10B981), width: 1.5), color: const Color(0xFF10B981).withAlpha(25), borderRadius: BorderRadius.circular(2)),
-                      child: const Align(alignment: Alignment.topLeft, child: Padding(padding: EdgeInsets.all(2), child: Text('VEHICLE 98%', style: TextStyle(color: Color(0xFF10B981), fontSize: 8, fontWeight: FontWeight.w800)))),
-                    ),
-                  ),
-                  Positioned(
-                    top: 80, left: 160,
-                    child: Container(
-                      width: 100, height: 60,
-                      decoration: BoxDecoration(border: Border.all(color: const Color(0xFFF87171), width: 1.5), color: const Color(0xFFF87171).withAlpha(40), borderRadius: BorderRadius.circular(2)),
-                      child: const Align(alignment: Alignment.topLeft, child: Padding(padding: EdgeInsets.all(2), child: Text('⚠ ANOMALY', style: TextStyle(color: Color(0xFFF87171), fontSize: 8, fontWeight: FontWeight.w800)))),
-                    ),
-                  ),
-                  // Terminal log
-                  Positioned(
-                    bottom: 0, left: 0, right: 0,
-                    child: Container(
-                      padding: const EdgeInsets.all(10),
-                      color: const Color(0xFF0F172A).withAlpha(230),
-                      child: const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        Text('> [14:02:11] Memindai Sektor Sudirman...', style: TextStyle(fontFamily: 'monospace', color: Color(0xFF34D399), fontSize: 9)),
-                        Text('> [14:02:15] PERINGATAN: Rintangan terdeteksi di jalur kiri.', style: TextStyle(fontFamily: 'monospace', color: Color(0xFFF87171), fontSize: 9, fontWeight: FontWeight.w700)),
-                        Text('> [14:02:18] Cocok dengan laporan LAP-001.', style: TextStyle(fontFamily: 'monospace', color: Colors.white70, fontSize: 9)),
-                      ]),
-                    ),
-                  ),
-                ],
-              ),
             ),
           ),
         ],
