@@ -12,6 +12,16 @@ import 'package:provider/provider.dart';
 import '../controllers/index.dart';
 import '../models/index.dart';
 
+/// Model & titik layanan AI yang dipakai chatbot.
+///
+/// Kunci TIDAK ditulis di kode (pernah terjadi sebelumnya: kunci Groq
+/// di-hardcode, lalu dihapus sehingga bot mati). Kunci diberikan saat
+/// build/run lewat --dart-define=LLAMA_API_KEY=... dan tidak masuk repo.
+/// Bila kunci belum dipasang, bot menjawab dari data nyata di aplikasi
+/// (lihat _jawabLokal) sehingga tetap berguna.
+const String _titikAiDefault = 'https://router.bynara.id/v1/chat/completions';
+const String _modelAiDefault = 'glm-5.3-flash';
+
 class SiagaBotWidget extends StatefulWidget {
   const SiagaBotWidget({super.key});
   @override
@@ -105,7 +115,8 @@ class _SiagaBotWidgetState extends State<SiagaBotWidget> {
 
   Future<String?> _callLlama(String userMessage, String reportsContext, String envContext) async {
     const apiKey = String.fromEnvironment('LLAMA_API_KEY', defaultValue: '');
-    const apiUrl = String.fromEnvironment('LLAMA_API_URL', defaultValue: 'https://openrouter.ai/api/v1/chat/completions');
+    const apiUrl = String.fromEnvironment('LLAMA_API_URL', defaultValue: _titikAiDefault);
+    const apiModel = String.fromEnvironment('LLAMA_API_MODEL', defaultValue: _modelAiDefault);
     
     // Bila kunci AI belum dipasang, jawab memakai data nyata yang sudah
     // tersedia di aplikasi (cuaca, kualitas udara, gempa, laporan) supaya
@@ -150,7 +161,7 @@ Pertanyaan Pengguna: "$userMessage"''';
           'X-Title': 'SiagaKota',
         },
         body: jsonEncode({
-          'model': 'meta-llama/llama-4-scout:free',
+          'model': apiModel,
           'temperature': 0.7,
           'max_tokens': 800,
           'messages': [
@@ -162,13 +173,20 @@ Pertanyaan Pengguna: "$userMessage"''';
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        return data['choices'][0]['message']['content'] as String?;
+        final isi = data['choices'][0]['message']['content'] as String?;
+        if (isi != null && isi.trim().isNotEmpty) return isi;
+        // Jawaban kosong dari server -> pakai jawaban lokal agar bot tetap guna.
+        return _jawabLokal(userMessage, reportsContext, envContext);
       } else {
-        debugPrint('[SiagaBot] Error ${response.statusCode}: ${response.body}');
-        return 'Maaf, terjadi kesalahan dari server AI. Code: ${response.statusCode}';
+        // Jangan tampilkan pesan error mentah ke pengguna; jawab dari data
+        // nyata yang sudah ada, dan catat penyebabnya untuk pengembang.
+        debugPrint('[SiagaBot] AI gagal ${response.statusCode}: ${response.body}');
+        return _jawabLokal(userMessage, reportsContext, envContext);
       }
     } catch (e) {
-      return 'Maaf, terjadi kesalahan koneksi AI: $e';
+      // Termasuk gagal jaringan / CORS pada web -> tetap jawab dari data nyata.
+      debugPrint('[SiagaBot] AI tidak terjangkau: $e');
+      return _jawabLokal(userMessage, reportsContext, envContext);
     }
   }
 
