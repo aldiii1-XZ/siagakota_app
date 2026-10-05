@@ -10,6 +10,61 @@ import '../services/index.dart';
 
 final NotificationService notificationService = NotificationService();
 
+/// Hasil percobaan mengirim laporan baru.
+enum HasilKirim {
+  berhasil,
+
+  /// Dikirim terlalu cepat (jarak antar-laporan terlalu dekat).
+  terlaluSering,
+
+  /// Sudah mencapai batas jumlah laporan dalam satu jam.
+  kuotaPenuh,
+}
+
+/// Aturan pembatas agar satu akun tidak membanjiri sistem dengan laporan.
+///
+/// Dipisah dari [ReportController] supaya bisa diuji tanpa perlu jaringan,
+/// penyimpanan, maupun widget.
+class PembatasLaporan {
+  const PembatasLaporan({
+    this.jedaMinimal = const Duration(seconds: 60),
+    this.maksPerJam = 5,
+  });
+
+  /// Jeda minimal antara dua laporan dari akun yang sama.
+  final Duration jedaMinimal;
+
+  /// Jumlah maksimal laporan dari akun yang sama dalam satu jam.
+  final int maksPerJam;
+
+  HasilKirim periksa({
+    required List<Report> laporan,
+    required String owner,
+    required DateTime sekarang,
+  }) {
+    final milikSaya = laporan.where((r) => r.owner == owner);
+    if (milikSaya.isEmpty) return HasilKirim.berhasil;
+
+    var terbaru = milikSaya.first.createdAt;
+    var dalamSatuJam = 0;
+    for (final r in milikSaya) {
+      if (r.createdAt.isAfter(terbaru)) terbaru = r.createdAt;
+      final selisih = sekarang.difference(r.createdAt);
+      if (!selisih.isNegative && selisih <= const Duration(hours: 1)) {
+        dalamSatuJam += 1;
+      }
+    }
+
+    if (sekarang.difference(terbaru) < jedaMinimal) {
+      return HasilKirim.terlaluSering;
+    }
+    if (dalamSatuJam >= maksPerJam) {
+      return HasilKirim.kuotaPenuh;
+    }
+    return HasilKirim.berhasil;
+  }
+}
+
 class ReportController extends ChangeNotifier {
   final CloudSyncService? cloud;
   final List<Report> _reports = [];
@@ -57,7 +112,7 @@ class ReportController extends ChangeNotifier {
     return List.unmodifiable(_sortedCache);
   }
 
-  Future<void> addReport({
+  Future<HasilKirim> addReport({
     required String nama,
     required String jenis,
     required String deskripsi,
@@ -69,6 +124,12 @@ class ReportController extends ChangeNotifier {
     Uint8List? fotoBytes,
     double? weatherRisk,
   }) async {
+    // Cegah spam: satu akun tidak boleh mengirim laporan terlalu cepat
+    // atau melebihi kuota per jam.
+    final hasil = const PembatasLaporan()
+        .periksa(laporan: _reports, owner: owner, sekarang: DateTime.now());
+    if (hasil != HasilKirim.berhasil) return hasil;
+
     final reportId = _uuid.v4();
 
     // Upload photo to Supabase Storage if available
@@ -107,6 +168,7 @@ class ReportController extends ChangeNotifier {
     await _persistReports();
     _syncUp(newReport);
     notifyListeners();
+    return HasilKirim.berhasil;
   }
 
   Future<void> addDraft(ReportDraft draft) async {

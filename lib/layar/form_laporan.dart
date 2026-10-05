@@ -682,7 +682,7 @@ class _ReportFormPageState extends State<ReportFormPage> {
     // Sertakan risiko banjir dari data cuaca nyata (bila sudah dimuat),
     // agar laporan banjir lebih diprioritaskan saat hujan lebat.
     final env = context.read<EnvironmentController>();
-    await controller.addReport(
+    final hasil = await controller.addReport(
       nama: namaController.text,
       jenis: jenis,
       deskripsi: deskripsiController.text,
@@ -695,7 +695,29 @@ class _ReportFormPageState extends State<ReportFormPage> {
       weatherRisk: jenis == 'Banjir' ? env.risikoBanjir : null,
     );
     if (!mounted) return;
-    Navigator.pop(context);
+
+    // Jelaskan dengan jelas bila laporan ditolak, jangan tutup formulir
+    // begitu saja agar pengguna tahu apa yang terjadi.
+    switch (hasil) {
+      case HasilKirim.terlaluSering:
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+                'Laporan baru saja dikirim. Tunggu sebentar sebelum mengirim lagi.'),
+          ),
+        );
+        return;
+      case HasilKirim.kuotaPenuh:
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+                'Batas laporan per jam tercapai. Coba lagi nanti ya.'),
+          ),
+        );
+        return;
+      case HasilKirim.berhasil:
+        Navigator.pop(context);
+    }
   }
 
   Future<void> _saveDraft() async {
