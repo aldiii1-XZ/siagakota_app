@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 import 'constants.dart';
+import 'status_log.dart';
 
 class Report {
   final String id;
@@ -22,6 +23,9 @@ class Report {
   String? duplicateOf;
   double weatherRisk;
 
+  /// Jejak perubahan status laporan, dari yang paling lama ke terbaru.
+  final List<StatusLog> riwayat;
+
   Report({
     required this.id,
     required this.nama,
@@ -41,7 +45,8 @@ class Report {
     this.votes = 0,
     this.duplicateOf,
     this.weatherRisk = 0,
-  });
+    List<StatusLog>? riwayat,
+  }) : riwayat = riwayat ?? [];
 
   double get priorityScore => severity * 2 + votes + weatherRisk;
 
@@ -64,6 +69,7 @@ class Report {
         'duplicateOf': duplicateOf,
         'weatherRisk': weatherRisk,
         'owner': owner,
+        'riwayat': riwayat.map((e) => e.toJson()).toList(),
       };
 
   factory Report.fromJson(Map<String, dynamic> json) => Report(
@@ -89,6 +95,11 @@ class Report {
         duplicateOf: json['duplicateOf'] as String?,
         weatherRisk: (json['weatherRisk'] as num?)?.toDouble() ?? 0,
         owner: json['owner'] as String? ?? '-',
+        riwayat: (json['riwayat'] as List?)
+                ?.map((e) =>
+                    StatusLog.fromJson(Map<String, dynamic>.from(e as Map)))
+                .toList() ??
+            [],
       );
 }
 

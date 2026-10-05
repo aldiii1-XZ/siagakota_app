@@ -67,6 +67,12 @@ class PembatasLaporan {
 
 class ReportController extends ChangeNotifier {
   final CloudSyncService? cloud;
+
+  /// Dipanggil setiap kali status sebuah laporan berubah.
+  /// Dipakai untuk membuat pemberitahuan dalam aplikasi tanpa membuat
+  /// ReportController bergantung langsung pada PemberitahuanController.
+  final void Function(Report report, ReportStatus status)? onStatusBerubah;
+
   final List<Report> _reports = [];
   final _uuid = const Uuid();
   final List<Report> _sortedCache = [];
@@ -76,7 +82,7 @@ class ReportController extends ChangeNotifier {
   bool _reportsLoaded = false;
   StreamSubscription<List<Report>>? _cloudSub;
 
-  ReportController({this.cloud}) {
+  ReportController({this.cloud, this.onStatusBerubah}) {
     loadDrafts();
     loadReports();
     _fetchInitialFromCloud();
@@ -156,6 +162,13 @@ class ReportController extends ChangeNotifier {
       // Pakai risiko banjir dari data cuaca nyata bila tersedia.
       // Nilai 0 dipakai bila belum ada data (netral, tidak menaikkan prioritas).
       weatherRisk: weatherRisk ?? _risikoBanjirNetral(),
+      riwayat: [
+        StatusLog(
+          status: ReportStatus.diterima,
+          waktu: DateTime.now(),
+          oleh: nama,
+        ),
+      ],
     );
     final duplicate = _findDuplicate(newReport);
     if (duplicate != null) {
@@ -218,15 +231,19 @@ class ReportController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void updateStatus(String id, ReportStatus status) {
+  void updateStatus(String id, ReportStatus status, {String? oleh}) {
     final idx = _reports.indexWhere((r) => r.id == id);
     if (idx == -1) return;
     _reports[idx].status = status;
+    _reports[idx].riwayat.add(
+          StatusLog(status: status, waktu: DateTime.now(), oleh: oleh ?? 'Petugas'),
+        );
     _sortedDirty = true;
     notificationService.showStatusChange(
       'Status laporan berubah',
       '${_reports[idx].jenis} kini ${status.label}',
     );
+    onStatusBerubah?.call(_reports[idx], status);
     _persistReports();
     _syncUp(_reports[idx]);
     notifyListeners();

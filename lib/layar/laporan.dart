@@ -14,6 +14,7 @@ import '../controllers/index.dart';
 import '../layar/form_laporan.dart';
 import '../models/index.dart';
 import '../theme.dart';
+import '../widgets/riwayat_status.dart';
 
 class ReportListView extends StatelessWidget {
   const ReportListView({super.key});
@@ -287,6 +288,27 @@ class ReportCard extends StatelessWidget {
               ),
             ],
             const SizedBox(height: 12),
+            // Jejak penanganan laporan — dapat dibuka/tutup.
+            Theme(
+              data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+              child: ExpansionTile(
+                tilePadding: EdgeInsets.zero,
+                childrenPadding: const EdgeInsets.only(bottom: 8),
+                leading: const Icon(Icons.history, size: 20),
+                title: const Text(
+                  'Riwayat penanganan',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+                ),
+                subtitle: Text(
+                  report.riwayat.isEmpty
+                      ? 'Belum ada'
+                      : '${report.riwayat.length} perubahan status',
+                  style: const TextStyle(fontSize: 11),
+                ),
+                children: [RiwayatStatusPanel(report: report)],
+              ),
+            ),
+            const SizedBox(height: 4),
             Row(
               children: [
                 IconButton(

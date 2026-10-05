@@ -17,6 +17,7 @@ import '../layar/laporan.dart';
 import '../layar/peta.dart';
 import '../update_service.dart';
 import '../widgets/chatbot.dart';
+import '../widgets/pemberitahuan_panel.dart';
 
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key});
@@ -147,6 +148,7 @@ class _HomeShellState extends State<HomeShell>
               label: Text(auth.adminKecamatan ?? 'Panel'),
               style: TextButton.styleFrom(foregroundColor: Colors.blueGrey.shade800),
             ),
+          const LoncengPemberitahuan(),
           IconButton(
             tooltip: 'Keluar',
             onPressed: () {

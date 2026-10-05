@@ -28,8 +28,18 @@ Future<void> main() async {
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => AuthController()),
+        // Pemberitahuan didaftarkan sebelum laporan supaya laporan bisa
+        // mengirim pemberitahuan saat status berubah.
+        ChangeNotifierProvider(create: (_) => PemberitahuanController()),
         ChangeNotifierProvider(
-          create: (_) => ReportController(cloud: cloudSync),
+          create: (ctx) => ReportController(
+            cloud: cloudSync,
+            onStatusBerubah: (report, status) {
+              ctx
+                  .read<PemberitahuanController>()
+                  .tambahPerubahanStatus(report: report, status: status);
+            },
+          ),
         ),
         ChangeNotifierProvider(create: (_) => EnvironmentController()),
       ],
