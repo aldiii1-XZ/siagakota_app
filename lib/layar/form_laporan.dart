@@ -58,9 +58,13 @@ class _ReportFormPageState extends State<ReportFormPage> {
     setState(() => _analyzingImage = true);
     
     try {
-      final apiKey = const String.fromEnvironment('LLAMA_API_KEY', defaultValue: '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');
-      final apiUrl = const String.fromEnvironment('LLAMA_API_URL', defaultValue: 'https://api.openrouter.ai/api/v1/chat/completions');
-      if (apiKey == 'YOUR_LLAMA_API_KEY' || apiKey.isEmpty) {
+      // Kunci TIDAK boleh ditulis di kode. Isi saat build:
+      //   flutter run --dart-define=LLAMA_API_KEY=<kunci>
+      // Tanpa kunci, analisis foto memakai mode sederhana (tanpa AI).
+      final apiKey =
+          const String.fromEnvironment('LLAMA_API_KEY', defaultValue: '');
+      final apiUrl = const String.fromEnvironment('LLAMA_API_URL', defaultValue: 'https://router.bynara.id/v1/chat/completions');
+      if (apiKey.isEmpty || apiKey == 'YOUR_LLAMA_API_KEY') {
         await Future.delayed(const Duration(seconds: 2));
         setState(() {
           deskripsiController.text = 'Terdapat kerusakan infrastruktur yang cukup parah berdasarkan foto. (Hasil Simulasi Vision AI)';
