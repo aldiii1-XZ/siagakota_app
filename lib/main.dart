@@ -622,19 +622,19 @@ Pertanyaan Pengguna: "$userMessage"''';
     if (tanyaCuaca) {
       final cuaca = _ambilBaris(envContext, 'Cuaca saat ini');
       bagian.add(cuaca.isNotEmpty
-          ? '$cuaca'
+          ? cuaca
           : 'Data cuaca belum tersedia. Coba tekan Perbarui di kartu Cuaca.');
     }
     if (tanyaUdara) {
       final udara = _ambilBaris(envContext, 'Kualitas udara');
       bagian.add(udara.isNotEmpty
-          ? '$udara'
+          ? udara
           : 'Data kualitas udara belum tersedia. Coba tekan Perbarui.');
     }
     if (tanyaGempa) {
       final gempa = _ambilBaris(envContext, 'Gempa terkini');
       bagian.add(gempa.isNotEmpty
-          ? '$gempa'
+          ? gempa
           : 'Data gempa terbaru belum tersedia saat ini.');
     }
     if (tanyaLaporan || bagian.isEmpty) {
